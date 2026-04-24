@@ -20,7 +20,7 @@ import { createRAGEngine, type RAGEngine, getIndexedCount } from '@/lib/rag-engi
 import { generateDashboard, createPreviewHtml, type GeneratedCode } from '@/lib/code-generator'
 import type { EmbeddingProgress } from '@/lib/embeddings'
 import { LayoutDashboard, Eye, Code, Pencil } from 'lucide-react'
-import { VisualEditor } from '@/components/visual-editor'
+import { GrapesJsEditor } from '@/components/grapesjs-editor'
 
 export default function DashboardGenerator() {
   // LLM Configuration
@@ -180,6 +180,7 @@ export default function DashboardGenerator() {
   const handleEditorSave = useCallback((updatedCode: GeneratedCode) => {
     setGeneratedCode(updatedCode)
     setEditableCode(updatedCode)
+    setIsEditorOpen(false)
   }, [])
 
   // Close editor
@@ -275,7 +276,7 @@ export default function DashboardGenerator() {
 
       {/* Visual Editor Modal */}
       {isEditorOpen && editableCode && (
-        <VisualEditor
+        <GrapesJsEditor
           code={editableCode}
           onSave={handleEditorSave}
           onClose={handleEditorClose}
