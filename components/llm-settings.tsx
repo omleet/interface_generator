@@ -76,13 +76,22 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
 
     setIsConnected(result.success)
     if (result.models && result.models.length > 0) {
-      setAvailableModels(result.models)
-      // Auto-select first model if current model is not in list
-      if (!result.models.includes(config.model)) {
-        onConfigChange({ ...config, model: result.models[0] })
-      }
+      // Preserve any custom model the user already set — merge it into the fetched list
+      // so it remains selectable even if the server doesn't report it (e.g. Ollama Cloud
+      // with a model name typed manually before the connection test).
+      const mergedModels = config.model && !result.models.includes(config.model)
+        ? [config.model, ...result.models]
+        : result.models
+      setAvailableModels(mergedModels)
+      // Do NOT auto-select another model — respect whatever the user already picked.
     } else {
-      setAvailableModels(SUGGESTED_MODELS[config.provider])
+      // Connection failed or server returned no models.
+      // Preserve existing custom model in the suggestions so it stays visible.
+      const fallback = SUGGESTED_MODELS[config.provider]
+      const mergedFallback = config.model && !fallback.includes(config.model)
+        ? [config.model, ...fallback]
+        : fallback
+      setAvailableModels(mergedFallback)
     }
 
     setIsLoading(false)
@@ -130,9 +139,9 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
   const handleAddCustomModel = () => {
     const trimmed = customModel.trim()
     if (!trimmed) return
-    if (!availableModels.includes(trimmed)) {
-      setAvailableModels([trimmed, ...availableModels])
-    }
+    // Update the available models list first so the Select has the value
+    // before onConfigChange triggers a re-render — prevents the select going blank.
+    setAvailableModels((prev) => (prev.includes(trimmed) ? prev : [trimmed, ...prev]))
     onConfigChange({ ...config, model: trimmed })
     setCustomModel('')
   }
@@ -164,7 +173,7 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
           <SelectItem value="ollama">Ollama</SelectItem>
           <SelectItem value="ollama-cloud">
             <span className="flex items-center gap-1.5">
-              <Cloud className="h-3.5 w-3.5" />
+              
               Ollama Cloud
             </span>
           </SelectItem>
@@ -185,23 +194,25 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
         </SelectContent>
       </Select>
 
-      {/* Quality mode quick toggle */}
-      <div className="flex items-center border rounded-md overflow-hidden text-xs font-medium">
-        <button
-          className={`px-2 py-1.5 transition-colors ${(config.qualityMode ?? 'fast') === 'fast' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-          onClick={() => onConfigChange({ ...config, qualityMode: 'fast' })}
-          title="Fast: higher temperature, no refinement pass"
-        >
-          Fast
-        </button>
-        <button
-          className={`px-2 py-1.5 transition-colors ${(config.qualityMode ?? 'fast') === 'quality' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-          onClick={() => onConfigChange({ ...config, qualityMode: 'quality' })}
-          title="Quality: low temperature + self-refinement pass"
-        >
-          Quality ✦
-        </button>
-      </div>
+      {/* Quality mode quick toggle — hidden for Ollama Cloud (cloud handles sampling server-side) */}
+      {config.provider !== 'ollama-cloud' && (
+        <div className="flex items-center border rounded-md overflow-hidden text-xs font-medium">
+          <button
+            className={`px-2 py-1.5 transition-colors ${(config.qualityMode ?? 'fast') === 'fast' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+            onClick={() => onConfigChange({ ...config, qualityMode: 'fast' })}
+            title="Fast: higher temperature, no refinement pass"
+          >
+            Fast
+          </button>
+          <button
+            className={`px-2 py-1.5 transition-colors ${(config.qualityMode ?? 'fast') === 'quality' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+            onClick={() => onConfigChange({ ...config, qualityMode: 'quality' })}
+            title="Quality: low temperature + self-refinement pass"
+          >
+            Quality ✦
+          </button>
+        </div>
+      )}
 
       {connectionStatus}
 
@@ -211,15 +222,15 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
             <Settings2 className="h-4 w-4" />
           </Button>
         </DialogTrigger>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="max-h-[85vh] flex flex-col gap-0 p-0">
+          <DialogHeader className="px-6 pt-6 pb-4 border-b">
             <DialogTitle>LLM Settings</DialogTitle>
             <DialogDescription>
               Configure your local LLM connection. Make sure CORS is enabled.
             </DialogDescription>
           </DialogHeader>
 
-          <FieldGroup className="py-4">
+          <FieldGroup className="flex-1 overflow-y-auto px-6 py-4">
             <Field>
               <FieldLabel>Provider</FieldLabel>
               <Select value={config.provider} onValueChange={(v: LLMProvider) => handleProviderChange(v)}>
@@ -328,25 +339,28 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
               </Field>
             )}
 
-            <Field>
-              <FieldLabel>Generation Mode</FieldLabel>
-              <div className="flex gap-2">
-                <button
-                  className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${(config.qualityMode ?? 'fast') === 'fast' ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}
-                  onClick={() => onConfigChange({ ...config, qualityMode: 'fast' as QualityMode })}
-                >
-                  ⚡ Fast
-                  <span className="block text-xs font-normal opacity-75">temp 0.4 · no refinement</span>
-                </button>
-                <button
-                  className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${(config.qualityMode ?? 'fast') === 'quality' ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}
-                  onClick={() => onConfigChange({ ...config, qualityMode: 'quality' as QualityMode })}
-                >
-                  ✦ Quality
-                  <span className="block text-xs font-normal opacity-75">temp 0.15 · self-refinement</span>
-                </button>
-              </div>
-            </Field>
+            {/* Generation Mode — only relevant for local providers that accept sampling params */}
+            {config.provider !== 'ollama-cloud' && (
+              <Field>
+                <FieldLabel>Generation Mode</FieldLabel>
+                <div className="flex gap-2">
+                  <button
+                    className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${(config.qualityMode ?? 'fast') === 'fast' ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}
+                    onClick={() => onConfigChange({ ...config, qualityMode: 'fast' as QualityMode })}
+                  >
+                    ⚡ Fast
+                    <span className="block text-xs font-normal opacity-75">temp 0.4 · no refinement</span>
+                  </button>
+                  <button
+                    className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${(config.qualityMode ?? 'fast') === 'quality' ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}
+                    onClick={() => onConfigChange({ ...config, qualityMode: 'quality' as QualityMode })}
+                  >
+                    ✦ Quality
+                    <span className="block text-xs font-normal opacity-75">temp 0.15 · self-refinement</span>
+                  </button>
+                </div>
+              </Field>
+            )}
 
             <Field>
               <FieldLabel>Model</FieldLabel>

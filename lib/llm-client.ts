@@ -81,40 +81,44 @@ export const DEFAULT_CONFIGS: Record<LLMProvider, Omit<LLMConfig, 'model'>> = {
 
 export const SUGGESTED_MODELS: Record<LLMProvider, string[]> = {
   ollama: [
-    'llama3.2:latest',
-    'llama3.1:latest',
-    'codellama:latest',
-    'mistral:latest',
-    'qwen2.5-coder:latest',
-    'deepseek-coder:latest',
+   
   ],
   // These are just placeholders shown when no API key is set yet — once the
   // user enters their key we replace this list with the actual /api/tags
-  // response from ollama.com. Any cloud model name works (e.g. "gpt-oss:120b-cloud",
-  // "glm-4.6:cloud", "qwen3-coder:480b-cloud", etc.).
+  // response from ollama.com. When hitting ollama.com directly, the real
+  // model names do NOT include the `-cloud` suffix (the suffix is only used
+  // when calling a LOCAL Ollama instance that proxies to cloud). The server
+  // proxy strips the suffix defensively, but we default to the canonical names.
   'ollama-cloud': [
-    'gpt-oss:120b-cloud',
-    'qwen3-coder:480b-cloud',
-    'deepseek-v3.1:671b-cloud',
-    'glm-4.6:cloud',
+   
   ],
   lmstudio: [
-    'lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF',
-    'lmstudio-community/Qwen2.5-Coder-7B-Instruct-GGUF',
-    'local-model',
+    
   ],
 }
 
 // Helper: providers that speak the Ollama REST protocol (local or cloud).
-// Both hit /api/tags and /api/chat — only difference is the Authorization header.
 function isOllamaProtocol(provider: LLMProvider): boolean {
   return provider === 'ollama' || provider === 'ollama-cloud'
+}
+
+// For Ollama Cloud we route through a Next.js server-side proxy to avoid CORS.
+// The browser cannot call https://ollama.com/api/* directly.
+function getTagsUrl(config: LLMConfig): string {
+  if (config.provider === 'ollama-cloud') return '/api/ollama-cloud/tags'
+  return `${config.baseUrl}/api/tags`
+}
+
+function getChatUrl(config: LLMConfig): string {
+  if (config.provider === 'ollama-cloud') return '/api/ollama-cloud/chat'
+  return `${config.baseUrl}/api/chat`
 }
 
 function buildAuthHeaders(config: LLMConfig): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (config.provider === 'ollama-cloud' && config.apiKey) {
-    headers['Authorization'] = `Bearer ${config.apiKey}`
+    // Sent to our proxy route, which forwards it as Authorization: Bearer to ollama.com
+    headers['x-ollama-api-key'] = config.apiKey
   }
   return headers
 }
@@ -126,7 +130,7 @@ export async function testConnection(config: LLMConfig): Promise<{ success: bool
       if (config.provider === 'ollama-cloud' && !config.apiKey) {
         return { success: false, error: 'Missing API key. Create one at ollama.com and paste it in settings.' }
       }
-      const response = await fetch(`${config.baseUrl}/api/tags`, {
+      const response = await fetch(getTagsUrl(config), {
         method: 'GET',
         headers: buildAuthHeaders(config),
         signal: AbortSignal.timeout(10000),
@@ -268,28 +272,89 @@ async function generateWithOllama(
   callbacks: ExtendedCallbacks,
   signal: AbortSignal
 ): Promise<void> {
-  const response = await fetch(`${config.baseUrl}/api/chat`, {
+  // Ollama Cloud does not accept local sampling options (num_ctx, num_predict, etc.)
+  // — those are Ollama-local parameters and the cloud API ignores or rejects them.
+  // Only send `options` for local Ollama instances.
+  const body: Record<string, unknown> = {
+    model: config.model,
+    messages: messages,
+    stream: true,
+  }
+  if (config.provider === 'ollama') {
+    body.options = SAMPLING_PRESETS[config.qualityMode ?? 'fast']
+  }
+
+  const response = await fetch(getChatUrl(config), {
     method: 'POST',
     headers: buildAuthHeaders(config),
-    body: JSON.stringify({
-      model: config.model,
-      messages: messages,
-      stream: true,
-      options: SAMPLING_PRESETS[config.qualityMode ?? 'fast'],
-    }),
+    body: JSON.stringify(body),
     signal,
   })
 
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
+    // Try to extract the actual error body so the user sees the real reason
+    // (invalid key, unknown model, rate-limited, etc.) instead of a generic status.
+    let detail = ''
+    try {
+      const text = await response.text()
+      if (text) {
+        try {
+          const parsed = JSON.parse(text)
+          detail =
+            parsed.upstreamBody ||
+            parsed.error ||
+            parsed.message ||
+            text
+        } catch {
+          detail = text
+        }
+      }
+    } catch {
+      // ignore — fall back to status-only message
+    }
+
+    const label = config.provider === 'ollama-cloud' ? 'Ollama Cloud' : 'Ollama'
+
+    // Detect the subscription-required case specifically. Ollama Cloud returns
+    // 403 with an `error` body containing "requires a subscription" for models
+    // that are gated behind the paid plan (the large ones: 120b/480b/671b, etc).
+    // This is NOT an auth-key problem, so we surface it as its own error class.
+    const detailLower = detail.toLowerCase()
+    if (
+      config.provider === 'ollama-cloud' &&
+      response.status === 403 &&
+      (detailLower.includes('subscription') || detailLower.includes('upgrade'))
+    ) {
       throw new Error(
-        config.provider === 'ollama-cloud'
-          ? 'Ollama Cloud rejected the API key (401/403). Check it in settings.'
-          : `Ollama error: ${response.status} ${response.statusText}`
+        `Model "${config.model}" requires an Ollama Cloud paid subscription. ` +
+          `Upgrade at https://ollama.com/upgrade or pick a free-tier model in settings.`,
       )
     }
-    const label = config.provider === 'ollama-cloud' ? 'Ollama Cloud' : 'Ollama'
-    throw new Error(`${label} error: ${response.status} ${response.statusText}`)
+
+    if (response.status === 401 || response.status === 403) {
+      if (config.provider === 'ollama-cloud') {
+        throw new Error(
+          `Ollama Cloud rejected the API key (${response.status}). ${
+            detail ? `Server said: ${detail}. ` : ''
+          }Create a key at ollama.com/settings/keys and paste it in settings.`,
+        )
+      }
+      throw new Error(`${label} error: ${response.status} ${response.statusText}${detail ? ` — ${detail}` : ''}`)
+    }
+
+    if (response.status === 404 && config.provider === 'ollama-cloud') {
+      throw new Error(
+        `Ollama Cloud could not find model "${config.model}". ` +
+          `Make sure you entered an exact cloud model name (e.g. "gpt-oss:120b", "qwen3-coder:480b"). ` +
+          `Note: the "-cloud" suffix is only used for local Ollama and is stripped automatically.${
+            detail ? ` Server said: ${detail}.` : ''
+          }`,
+      )
+    }
+
+    throw new Error(
+      `${label} error: ${response.status} ${response.statusText}${detail ? ` — ${detail}` : ''}`,
+    )
   }
 
   const reader = response.body?.getReader()
