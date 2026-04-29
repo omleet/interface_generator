@@ -1,5 +1,6 @@
 import JSZip from 'jszip'
 import type { GeneratedCode } from './code-generator'
+import { injectRuntimeGuard } from './code-generator'
 
 export interface ExportOptions {
   userPrompt: string
@@ -327,8 +328,9 @@ export async function exportAsZip(
 ): Promise<void> {
   const zip = new JSZip()
 
-  // Main HTML file
-  zip.file('index.html', code.fullHtml)
+  // Main HTML file — wrap in the same Chart.js / IFrame guard the preview
+  // uses so the exported standalone copy behaves identically.
+  zip.file('index.html', injectRuntimeGuard(code.fullHtml))
 
   // Custom CSS if any
   if (code.css.trim()) {

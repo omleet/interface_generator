@@ -166,7 +166,7 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
   return (
     <div className="flex items-center gap-3">
       <Select value={config.provider} onValueChange={(v: LLMProvider) => handleProviderChange(v)}>
-        <SelectTrigger className="w-[150px]">
+        <SelectTrigger className="w-37.5">
           <SelectValue placeholder="Provider" />
         </SelectTrigger>
         <SelectContent>
@@ -182,7 +182,7 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
       </Select>
 
       <Select value={config.model} onValueChange={handleModelChange}>
-        <SelectTrigger className="w-[200px]">
+        <SelectTrigger className="w-50">
           <SelectValue placeholder="Select model" />
         </SelectTrigger>
         <SelectContent>

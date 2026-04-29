@@ -1159,6 +1159,7 @@ new Chart(ctx, {
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/js/adminlte.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </body>
 </html>`,
   },
@@ -1782,8 +1783,50 @@ new Chart(ctx, {
   },
 ]
 
+// Portuguese keywords added to the embedded text per category, so prompts
+// in Portuguese ("dashboard de sensores", "tabela de equipamentos") can match
+// the English-described knowledge items.
+const PT_CATEGORY_KEYWORDS: Record<KnowledgeItem['category'], string> = {
+  primitive: 'primitivo elemento base',
+  pattern: 'padrão padrao composição composicao',
+  component: 'componente elemento',
+  widget: 'widget caixa painel cartão',
+  chart: 'gráfico grafico visualização visualizacao dados',
+  layout: 'layout estrutura página pagina',
+  utility: 'utilitário utilitario utilidade',
+}
+
+// Pulls a small, deduplicated bag of class tokens out of the HTML so AdminLTE
+// vocabulary (info-box, small-box, card-primary, content-wrapper, etc.) is
+// embedded directly. Without this, the embedding for "info-box" only sees the
+// description text and misses the actual class name.
+function extractClassTokens(html: string, max = 30): string {
+  if (!html) return ''
+  const matches = html.match(/class="([^"]+)"/g) ?? []
+  const tokens = new Set<string>()
+  for (const m of matches) {
+    const inner = m.slice(7, -1)
+    for (const tok of inner.split(/\s+/)) {
+      if (tok && tok.length < 40) tokens.add(tok)
+      if (tokens.size >= max) break
+    }
+    if (tokens.size >= max) break
+  }
+  return Array.from(tokens).join(' ')
+}
+
 export function createSearchText(item: KnowledgeItem): string {
-  return `${item.name} ${item.description} ${item.tags.join(' ')} ${item.category}`
+  return [
+    item.name,
+    item.description,
+    item.tags.join(' '),
+    item.category,
+    PT_CATEGORY_KEYWORDS[item.category] ?? '',
+    extractClassTokens(item.html),
+    (item.composableWith ?? []).join(' '),
+  ]
+    .filter(Boolean)
+    .join(' ')
 }
 
 export function getAllItems(): KnowledgeItem[] {

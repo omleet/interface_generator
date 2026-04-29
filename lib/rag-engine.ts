@@ -24,10 +24,10 @@ export async function createRAGEngine(onProgress?: ProgressCallback): Promise<RA
     index: async () => {
       await indexKnowledgeBase(onProgress)
     },
-    search: async (query: string, topK = 5) => {
+    search: async (query: string, topK = 7) => {
       return searchKnowledgeBase(query, topK)
     },
-    getContext: async (query: string, topK = 5) => {
+    getContext: async (query: string, topK = 7) => {
       return getContextForPrompt(query, topK)
     },
   }
@@ -68,33 +68,81 @@ async function indexKnowledgeBase(onProgress?: ProgressCallback): Promise<void> 
 }
 
 // --- Query Expansion ---
-// Generate alternative phrasings of the query to improve recall
+// Generate alternative phrasings of the query to improve recall.
+// The knowledge base is indexed in English, but real prompts often arrive in
+// Portuguese. We translate the most common domain terms before expanding.
+const PT_EN_TERMS: Array<[RegExp, string]> = [
+  [/\bgr[áa]ficos?\b/gi, 'chart'],
+  [/\bvisualiza[çc][ãa]o\b/gi, 'visualization'],
+  [/\btabelas?\b/gi, 'table'],
+  [/\blistas?\b/gi, 'list'],
+  [/\bcart[õo]es?\b/gi, 'card'],
+  [/\bcaixas?\b/gi, 'box'],
+  [/\bpain[ée]is?\b/gi, 'panel'],
+  [/\bpainel\b/gi, 'dashboard panel'],
+  [/\bbot[õo]es?\b/gi, 'button'],
+  [/\bformul[áa]rios?\b/gi, 'form'],
+  [/\bcampos?\b/gi, 'input field'],
+  [/\bsensores?\b/gi, 'sensor'],
+  [/\btens[ãa]o\b/gi, 'voltage'],
+  [/\bcorrente\b/gi, 'current'],
+  [/\btemperaturas?\b/gi, 'temperature'],
+  [/\bumidade\b/gi, 'humidity'],
+  [/\bmedi[çc][ãa]o\b/gi, 'measurement reading'],
+  [/\bmedi[çc][õo]es\b/gi, 'measurements readings'],
+  [/\balertas?\b/gi, 'alert notification'],
+  [/\busu[áa]rios?\b/gi, 'user'],
+  [/\brelat[óo]rios?\b/gi, 'report'],
+  [/\bestat[íi]sticas?\b/gi, 'statistics metrics'],
+  [/\bm[ée]tricas?\b/gi, 'metric KPI'],
+  [/\bequipamentos?\b/gi, 'equipment device'],
+  [/\bdispositivos?\b/gi, 'device'],
+  [/\btempo real\b/gi, 'real-time live'],
+  [/\bmonitora(?:r|mento|gem)\b/gi, 'monitor real-time'],
+  [/\bbarra lateral\b/gi, 'sidebar'],
+  [/\bcabe[çc]alho\b/gi, 'header navbar'],
+  [/\brodap[ée]\b/gi, 'footer'],
+]
+
+function translatePtToEn(query: string): string {
+  let out = query
+  for (const [re, en] of PT_EN_TERMS) out = out.replace(re, en)
+  return out
+}
+
 function expandQuery(query: string): string[] {
-  const lower = query.toLowerCase()
   const expansions: string[] = [query]
+
+  // If the prompt is Portuguese, add an English-translated variant.
+  const translated = translatePtToEn(query)
+  if (translated !== query) expansions.push(translated)
+
+  // From here on, run synonyms against the English-translated text so that
+  // Portuguese terms also benefit from the structural expansion.
+  const lower = translated.toLowerCase()
 
   // Structural synonyms
   if (lower.includes('chart') || lower.includes('graph')) {
-    expansions.push(query.replace(/chart|graph/gi, 'visualization data plot'))
+    expansions.push(translated.replace(/chart|graph/gi, 'visualization data plot'))
   }
   if (lower.includes('table') || lower.includes('list')) {
-    expansions.push(query.replace(/table|list/gi, 'datatable grid rows'))
+    expansions.push(translated.replace(/table|list/gi, 'datatable grid rows'))
   }
   if (lower.includes('card') || lower.includes('widget')) {
-    expansions.push(query.replace(/card|widget/gi, 'info-box small-box panel'))
+    expansions.push(translated.replace(/card|widget/gi, 'info-box small-box panel'))
   }
   if (lower.includes('form') || lower.includes('input')) {
-    expansions.push(query.replace(/form|input/gi, 'field form-group controls'))
+    expansions.push(translated.replace(/form|input/gi, 'field form-group controls'))
   }
   if (lower.includes('dashboard') || lower.includes('overview')) {
-    expansions.push(query + ' stats metrics KPIs summary')
+    expansions.push(translated + ' stats metrics KPIs summary')
   }
   if (lower.includes('monitor') || lower.includes('sensor')) {
-    expansions.push(query + ' real-time live data update chart')
+    expansions.push(translated + ' real-time live data update chart info-box small-box')
   }
 
   // Always add a component-focused variant
-  expansions.push(`AdminLTE components for: ${query}`)
+  expansions.push(`AdminLTE components for: ${translated}`)
 
   return [...new Set(expansions)]
 }

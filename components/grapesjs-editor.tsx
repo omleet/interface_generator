@@ -40,7 +40,11 @@ import {
   getDefaultModel,
   type LLMConfig,
 } from '@/lib/llm-client'
-import { type GeneratedCode } from '@/lib/code-generator'
+import {
+  type GeneratedCode,
+  ADMINLTE_CDN_STYLES,
+  ADMINLTE_CDN_SCRIPTS,
+} from '@/lib/code-generator'
 import { ADMINLTE_BLOCKS, ADMINLTE_CATEGORIES } from '@/lib/grapesjs-blocks'
 import { askAI, askAIForFragment } from '@/lib/visual-editor-ai'
 
@@ -177,20 +181,14 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
       storageManager: false,
       // We build our own top/side UI — GrapesJS default panels are hidden
       panels: { defaults: [] },
-      // Load AdminLTE, Bootstrap and Font Awesome INSIDE the canvas iframe
-      // so our blocks render identically to the real dashboard.
+      // Load AdminLTE and Font Awesome INSIDE the canvas iframe so our blocks
+      // render identically to the preview and the exported ZIP. The CDN list
+      // comes from a single source of truth in lib/code-generator so all three
+      // surfaces (preview, editor, export) load the exact same assets — no
+      // more specificity fights from a stray bootstrap.min.css.
       canvas: {
-        styles: [
-          'https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/css/bootstrap.min.css',
-          'https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css',
-          'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
-        ],
-        scripts: [
-          'https://code.jquery.com/jquery-3.6.0.min.js',
-          'https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.bundle.min.js',
-          'https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/js/adminlte.min.js',
-          'https://cdn.jsdelivr.net/npm/chart.js',
-        ],
+        styles: [...ADMINLTE_CDN_STYLES],
+        scripts: [...ADMINLTE_CDN_SCRIPTS],
       },
       blockManager: {
         appendTo: blocksRef.current,
