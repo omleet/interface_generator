@@ -3,10 +3,10 @@
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { Database, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
-import type { EmbeddingProgress } from '@/lib/embeddings'
+import type { RAGIndexProgress } from '@/lib/rag-engine'
 
 interface RAGStatusProps {
-  status: EmbeddingProgress
+  status: RAGIndexProgress
   indexedCount: number
 }
 

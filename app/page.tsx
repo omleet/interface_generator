@@ -16,9 +16,8 @@ import {
   DEFAULT_CONFIGS,
   getDefaultModel,
 } from '@/lib/llm-client'
-import { createRAGEngine, type RAGEngine, getIndexedCount } from '@/lib/rag-engine'
+import { createRAGEngine, type RAGEngine, getIndexedCount, type RAGIndexProgress } from '@/lib/rag-engine'
 import { generateDashboard, createPreviewHtml, type GeneratedCode } from '@/lib/code-generator'
-import type { EmbeddingProgress } from '@/lib/embeddings'
 import { LayoutDashboard, Eye, Code, Pencil } from 'lucide-react'
 import { GrapesJsEditor } from '@/components/grapesjs-editor'
 
@@ -31,7 +30,7 @@ export default function DashboardGenerator() {
 
   // RAG Engine
   const [ragEngine, setRagEngine] = useState<RAGEngine | null>(null)
-  const [ragStatus, setRagStatus] = useState<EmbeddingProgress>({
+  const [ragStatus, setRagStatus] = useState<RAGIndexProgress>({
     status: 'loading',
     progress: 0,
     message: 'Initializing...',

@@ -12,7 +12,6 @@ export interface KnowledgeItem {
 }
 
 export interface IndexedItem extends KnowledgeItem {
-  embedding?: number[]
   searchText: string
 }
 
