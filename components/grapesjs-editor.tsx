@@ -797,7 +797,7 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
 
       {/* ── AI Assistant panel (bottom) ─────────────────────────────────── */}
       {aiOpen && (
-        <section className="border-t border-gray-200 bg-white text-gray-900 shrink-0 flex flex-col h-[280px]">
+        <section className="border-t border-gray-200 bg-white text-gray-900 shrink-0 flex flex-col h-70">
           <div className="flex items-center justify-between border-b px-3 py-2">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-violet-500" />
@@ -886,7 +886,7 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
                     : 'Describe a change to the page…'
                 }
                 rows={2}
-                className="resize-none text-sm min-h-[44px]"
+                className="resize-none text-sm min-h-11"
                 disabled={isAiLoading || !isReady}
               />
               <Button

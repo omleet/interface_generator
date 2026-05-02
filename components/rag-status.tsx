@@ -35,7 +35,7 @@ export function RAGStatus({ status, indexedCount }: RAGStatusProps) {
         <Loader2 className="h-3 w-3 animate-spin" />
         Loading RAG
       </Badge>
-      <div className="flex items-center gap-2 min-w-[200px]">
+      <div className="flex items-center gap-2 min-w-50">
         <Database className="h-4 w-4 text-muted-foreground" />
         <Progress value={status.progress || 0} className="h-2 flex-1" />
         <span className="text-xs text-muted-foreground w-10">

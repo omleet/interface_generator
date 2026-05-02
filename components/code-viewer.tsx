@@ -124,8 +124,8 @@ export function CodeViewer({ code, streamingContent, isStreaming, userPrompt, ge
         </div>
 
         <TabsContent value="full" className="flex-1 m-0 overflow-hidden">
-          <ScrollArea className="h-full max-h-[400px]">
-            <pre ref={scrollRef} className="p-4 text-sm font-mono whitespace-pre-wrap break-words">
+          <ScrollArea className="h-full max-h-100">
+            <pre ref={scrollRef} className="p-4 text-sm font-mono whitespace-pre-wrap wrap-break-word">
               <code>{displayContent}</code>
               {isStreaming && <span className="animate-pulse">|</span>}
             </pre>
@@ -133,24 +133,24 @@ export function CodeViewer({ code, streamingContent, isStreaming, userPrompt, ge
         </TabsContent>
 
         <TabsContent value="html" className="flex-1 m-0 overflow-hidden">
-          <ScrollArea className="h-full max-h-[400px]">
-            <pre className="p-4 text-sm font-mono whitespace-pre-wrap break-words">
+          <ScrollArea className="h-full max-h-100">
+            <pre className="p-4 text-sm font-mono whitespace-pre-wrap wrap-break-word">
               <code>{code?.html || ''}</code>
             </pre>
           </ScrollArea>
         </TabsContent>
 
         <TabsContent value="css" className="flex-1 m-0 overflow-hidden">
-          <ScrollArea className="h-full max-h-[400px]">
-            <pre className="p-4 text-sm font-mono whitespace-pre-wrap break-words">
+          <ScrollArea className="h-full max-h-100">
+            <pre className="p-4 text-sm font-mono whitespace-pre-wrap wrap-break-word">
               <code>{code?.css || 'No custom CSS'}</code>
             </pre>
           </ScrollArea>
         </TabsContent>
 
         <TabsContent value="js" className="flex-1 m-0 overflow-hidden">
-          <ScrollArea className="h-full max-h-[400px]">
-            <pre className="p-4 text-sm font-mono whitespace-pre-wrap break-words">
+          <ScrollArea className="h-full max-h-100">
+            <pre className="p-4 text-sm font-mono whitespace-pre-wrap wrap-break-word">
               <code>{code?.js || 'No custom JavaScript'}</code>
             </pre>
           </ScrollArea>

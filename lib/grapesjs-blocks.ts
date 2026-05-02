@@ -612,9 +612,9 @@ export const ADMINLTE_BLOCKS: AdminLteBlockDef[] = [
     media: '➖',
     content: `<div class="col-12">
   <div class="d-flex align-items-center my-2">
-    <hr class="flex-grow-1">
+    <hr class="grow">
     <span class="mx-3 text-muted font-weight-bold text-uppercase" style="font-size:11px;letter-spacing:0.1em;">Section Title</span>
-    <hr class="flex-grow-1">
+    <hr class="grow">
   </div>
 </div>`,
   },

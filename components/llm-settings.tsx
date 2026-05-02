@@ -209,7 +209,7 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
             onClick={() => onConfigChange({ ...config, qualityMode: 'quality' })}
             title="Quality: low temperature + self-refinement pass"
           >
-            Quality ✦
+            Quality
           </button>
         </div>
       )}
@@ -226,7 +226,7 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
           <DialogHeader className="px-6 pt-6 pb-4 border-b">
             <DialogTitle>LLM Settings</DialogTitle>
             <DialogDescription>
-              Configure your local LLM connection. Make sure CORS is enabled.
+              Configure your LLM connection. Make sure CORS is enabled.
             </DialogDescription>
           </DialogHeader>
 
@@ -348,15 +348,15 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
                     className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${(config.qualityMode ?? 'fast') === 'fast' ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}
                     onClick={() => onConfigChange({ ...config, qualityMode: 'fast' as QualityMode })}
                   >
-                    ⚡ Fast
-                    <span className="block text-xs font-normal opacity-75">temp 0.4 · no refinement</span>
+                    Fast
+                    <span className="block text-xs font-normal opacity-75">temp 0.5 · no refinement</span>
                   </button>
                   <button
                     className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${(config.qualityMode ?? 'fast') === 'quality' ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}
                     onClick={() => onConfigChange({ ...config, qualityMode: 'quality' as QualityMode })}
                   >
-                    ✦ Quality
-                    <span className="block text-xs font-normal opacity-75">temp 0.15 · self-refinement</span>
+                    Quality
+                    <span className="block text-xs font-normal opacity-75">temp 0.7 · self-refinement</span>
                   </button>
                 </div>
               </Field>

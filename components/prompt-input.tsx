@@ -356,8 +356,8 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Describe the industrial interface you want to create…"
-          className="min-h-[100px] pr-24 resize-none"
+          placeholder="Describe your idea… or choose an example below to use as a prompt..."
+          className="min-h-25 pr-24 resize-none"
           disabled={isLoading || disabled}
         />
         {isLoading ? (
@@ -397,6 +397,7 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
             className={`
               inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md
               transition-all duration-150 select-none
+              border border-black/10 dark:border-white/20 
               ${isExamplesOpen
                 ? 'bg-primary text-primary-foreground shadow-sm'
                 : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
@@ -431,7 +432,7 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
                     hover:border-primary/40 hover:bg-primary/5
                     transition-all duration-150 disabled:opacity-40
                     text-foreground/80 hover:text-foreground
-                    max-w-[200px]
+                    max-w-50
                   `}
                 >
                   <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
@@ -483,7 +484,7 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
             </div>
 
             {/* Results */}
-            <div ref={listRef} className="overflow-y-auto max-h-[340px] divide-y divide-border/50">
+            <div ref={listRef} className="overflow-y-auto max-h-85 divide-y divide-border/50">
               {filteredExamples.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-center px-4">
                   <Search className="h-8 w-8 text-muted-foreground/30 mb-2" />
@@ -509,7 +510,7 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
                       `}
                     >
                       {/* Icon bubble */}
-                      <div className={`mt-0.5 flex-shrink-0 h-7 w-7 rounded-md flex items-center justify-center ${col.bg}`}>
+                      <div className={`mt-0.5 shrink-0 h-7 w-7 rounded-md flex items-center justify-center ${col.bg}`}>
                         <Icon className={`h-3.5 w-3.5 ${col.text}`} />
                       </div>
 

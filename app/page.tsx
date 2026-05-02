@@ -197,7 +197,7 @@ export default function DashboardGenerator() {
               <LayoutDashboard className="h-8 w-8 text-primary" />
               <div>
                 <h1 className="text-xl font-semibold">Interface Generator</h1>
-                <p className="text-sm text-muted-foreground">Generate dashboards/interfaces using local LLMs</p>
+                <p className="text-sm text-muted-foreground">Generate dashboards/interfaces using LLMs</p>
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -231,7 +231,7 @@ export default function DashboardGenerator() {
 
             {/* Code Viewer - Below input on left side */}
             <Card className="flex-1 overflow-hidden min-h-0">
-              <CardContent className="p-0 h-full max-h-[500px]">
+              <CardContent className="p-0 h-full max-h-125">
                 <CodeViewer
                   code={generatedCode}
                   streamingContent={streamingContent}

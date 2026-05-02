@@ -30,8 +30,8 @@ export const SAMPLING_PRESETS: Record<QualityMode, SamplingParams> = {
     // Lower than before (was 0.4). 0.4 was high enough that weaker models
     // occasionally drifted and produced an empty wrapper. 0.3 keeps it snappy
     // but much more deterministic for HTML generation.
-    temperature: 0.3,
-    top_p: 0.9,
+    temperature: 0.5,
+    top_p: 0.92,
     repeat_penalty: 1.05,
     // Bumped from 4000 — a full AdminLTE dashboard with charts + tables can
     // easily hit 4k tokens and get cut mid-page.
@@ -39,14 +39,14 @@ export const SAMPLING_PRESETS: Record<QualityMode, SamplingParams> = {
     // Bumped from 8192. System prompt (~1200 tok) + RAG context (~3500 tok)
     // + user request was flirting with the 8k window, causing Ollama to
     // silently truncate the request and return boilerplate.
-    num_ctx: 10240,
+    num_ctx: 12288,
   },
   quality: {
-    temperature: 0.15,
-    top_p: 0.85,
+    temperature: 0.7,
+    top_p: 0.95,
     repeat_penalty: 1.1,
-    num_predict: 6000,
-    num_ctx: 12288,
+    num_predict: 8192,
+    num_ctx: 16384,
   },
 }
 

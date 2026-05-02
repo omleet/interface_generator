@@ -450,8 +450,8 @@ export const ADMINLTE_KNOWLEDGE: KnowledgeItem[] = [
 
 <!-- Flex Grow/Shrink -->
 <div class="d-flex">
-  <div class="flex-grow-1">Grow</div>
-  <div class="flex-shrink-0">Don't shrink</div>
+  <div class="grow">Grow</div>
+  <div class="shrink-0">Don't shrink</div>
 </div>
 
 <!-- Common Pattern: Space Between with Center -->
