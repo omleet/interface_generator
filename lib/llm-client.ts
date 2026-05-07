@@ -1,12 +1,14 @@
 export type LLMProvider = 'ollama' | 'ollama-cloud' | 'lmstudio'
 
-export type QualityMode = 'fast' | 'quality'
+export type QualityMode = 'fast' | 'quality' | 'custom'
 
 export interface LLMConfig {
   provider: LLMProvider
   baseUrl: string
   model: string
   qualityMode?: QualityMode
+  // Used when qualityMode === 'custom'. Range: 0.1 – 1.0 (step 0.1).
+  customTemperature?: number
   // Required for ollama-cloud. Sent as `Authorization: Bearer <apiKey>`.
   // The same API key works for both the /api/tags listing and the
   // /api/chat streaming endpoint. For local providers this is ignored.
@@ -25,7 +27,8 @@ export interface SamplingParams {
   num_ctx: number
 }
 
-export const SAMPLING_PRESETS: Record<QualityMode, SamplingParams> = {
+// Only 'fast' and 'quality' have fixed presets. 'custom' builds params at runtime.
+export const SAMPLING_PRESETS: Record<Exclude<QualityMode, 'custom'>, SamplingParams> = {
   fast: {
     // Lower than before (was 0.4). 0.4 was high enough that weaker models
     // occasionally drifted and produced an empty wrapper. 0.3 keeps it snappy
@@ -95,6 +98,17 @@ export const SUGGESTED_MODELS: Record<LLMProvider, string[]> = {
   lmstudio: [
     
   ],
+}
+
+// Resolve the effective SamplingParams for a given config, including custom temperature.
+export function resolveSamplingParams(config: LLMConfig): SamplingParams {
+  const mode = config.qualityMode ?? 'fast'
+  if (mode === 'custom') {
+    const temp = config.customTemperature ?? 0.5
+    // Derive the rest of the params from the 'fast' preset but override temperature.
+    return { ...SAMPLING_PRESETS.fast, temperature: temp }
+  }
+  return SAMPLING_PRESETS[mode]
 }
 
 // Helper: providers that speak the Ollama REST protocol (local or cloud).
@@ -281,7 +295,7 @@ async function generateWithOllama(
     stream: true,
   }
   if (config.provider === 'ollama') {
-    body.options = SAMPLING_PRESETS[config.qualityMode ?? 'fast']
+    body.options = resolveSamplingParams(config)
   }
 
   const response = await fetch(getChatUrl(config), {
@@ -436,9 +450,9 @@ async function generateWithLMStudio(
       model: config.model,
       messages: messages,
       stream: true,
-      temperature: SAMPLING_PRESETS[config.qualityMode ?? 'fast'].temperature,
-      top_p: SAMPLING_PRESETS[config.qualityMode ?? 'fast'].top_p,
-      max_tokens: SAMPLING_PRESETS[config.qualityMode ?? 'fast'].num_predict,
+      temperature: resolveSamplingParams(config).temperature,
+      top_p: resolveSamplingParams(config).top_p,
+      max_tokens: resolveSamplingParams(config).num_predict,
     }),
     signal,
   })

@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { FieldGroup, Field, FieldLabel } from '@/components/ui/field'
+import { Slider } from '@/components/ui/slider'
 import { Settings2, Wifi, WifiOff, RefreshCw, Cloud, Eye, EyeOff } from 'lucide-react'
 import {
   type LLMConfig,
@@ -211,6 +212,13 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
           >
             Quality
           </button>
+          <button
+            className={`px-2 py-1.5 transition-colors ${(config.qualityMode ?? 'fast') === 'custom' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+            onClick={() => onConfigChange({ ...config, qualityMode: 'custom', customTemperature: config.customTemperature ?? 0.5 })}
+            title="Custom: choose your own temperature"
+          >
+            Custom
+          </button>
         </div>
       )}
 
@@ -358,7 +366,50 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
                     Quality
                     <span className="block text-xs font-normal opacity-75">temp 0.7 · self-refinement</span>
                   </button>
+                  <button
+                    className={`flex-1 py-2 rounded-md border text-sm font-medium transition-colors ${(config.qualityMode ?? 'fast') === 'custom' ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}
+                    onClick={() => onConfigChange({ ...config, qualityMode: 'custom' as QualityMode, customTemperature: config.customTemperature ?? 0.5 })}
+                  >
+                    Custom
+                    <span className="block text-xs font-normal opacity-75">temperatura livre</span>
+                  </button>
                 </div>
+
+                {/* Custom temperature slider — only visible when Custom mode is active */}
+                {(config.qualityMode ?? 'fast') === 'custom' && (() => {
+                  const temp = config.customTemperature ?? 0.5
+                  const label =
+                    temp <= 0.3
+                      ? 'More restricted — deterministic and predictable responses.'
+                      : temp <= 0.6
+                      ? 'Balanced — a good balance between consistency and variety.'
+                      : 'More creative — varied and imaginative responses.'
+                  return (
+                    <div className="mt-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">Temperature</span>
+                        <span className="text-sm font-mono font-semibold tabular-nums w-8 text-right">
+                          {temp.toFixed(1)}
+                        </span>
+                      </div>
+                      <Slider
+                        min={0.1}
+                        max={1.0}
+                        step={0.1}
+                        value={[temp]}
+                        onValueChange={([v]) =>
+                          onConfigChange({ ...config, customTemperature: Math.round(v * 10) / 10 })
+                        }
+                        className="w-full"
+                      />
+                      <div className="flex justify-between text-xs text-muted-foreground select-none">
+                        <span>0.1</span>
+                        <span>1.0</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">{label}</p>
+                    </div>
+                  )
+                })()}
               </Field>
             )}
 
