@@ -101,12 +101,30 @@ export const SUGGESTED_MODELS: Record<LLMProvider, string[]> = {
 }
 
 // Resolve the effective SamplingParams for a given config, including custom temperature.
+// When mode is 'custom', all params are interpolated between the 'fast' and 'quality'
+// presets proportionally to the chosen temperature (0.1 → fast, 1.0 → quality).
+// This ensures that higher creativity (temperature) is accompanied by a larger context
+// window, more generous output budget, and a stricter repeat penalty — which all make
+// sense together — rather than keeping the 'fast' values which were tuned for a
+// different (low-temperature, HTML-generation) use case.
 export function resolveSamplingParams(config: LLMConfig): SamplingParams {
   const mode = config.qualityMode ?? 'fast'
   if (mode === 'custom') {
     const temp = config.customTemperature ?? 0.5
-    // Derive the rest of the params from the 'fast' preset but override temperature.
-    return { ...SAMPLING_PRESETS.fast, temperature: temp }
+    // Normalise temperature into a 0–1 interpolation factor.
+    // temp=0.1 → t=0 (fast preset), temp=1.0 → t=1 (quality preset).
+    const t = (temp - 0.1) / 0.9
+    const lerp = (a: number, b: number): number =>
+      Math.round((a + (b - a) * t) * 100) / 100
+    const fast = SAMPLING_PRESETS.fast
+    const quality = SAMPLING_PRESETS.quality
+    return {
+      temperature:    temp,
+      top_p:          lerp(fast.top_p,          quality.top_p),
+      repeat_penalty: lerp(fast.repeat_penalty, quality.repeat_penalty),
+      num_predict:    Math.round(lerp(fast.num_predict, quality.num_predict)),
+      num_ctx:        Math.round(lerp(fast.num_ctx,     quality.num_ctx)),
+    }
   }
   return SAMPLING_PRESETS[mode]
 }
