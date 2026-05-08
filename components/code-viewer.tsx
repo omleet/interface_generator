@@ -8,8 +8,10 @@ import { Check, Copy, Download, FileCode2, FileJson } from 'lucide-react'
 import { copyToClipboard, downloadHtml, exportAsZip, type ExportOptions } from '@/lib/file-exporter'
 import type { GeneratedCode } from '@/lib/code-generator'
 
+type AnyGeneratedCode = GeneratedCode & { format?: string }
+
 interface CodeViewerProps {
-  code: GeneratedCode | null
+  code: AnyGeneratedCode | null
   streamingContent?: string
   isStreaming?: boolean
   userPrompt?: string
@@ -17,6 +19,7 @@ interface CodeViewerProps {
 }
 
 export function CodeViewer({ code, streamingContent, isStreaming, userPrompt, generationTimeMs }: CodeViewerProps) {
+  const isQtMode = code?.format === 'qt-python' || (typeof code?.fullHtml === 'string' && !code.fullHtml.trimStart().startsWith('<'))
   const [copiedTab, setCopiedTab] = useState<string | null>(null)
   const scrollRef = useRef<HTMLPreElement>(null)
 
@@ -38,7 +41,17 @@ export function CodeViewer({ code, streamingContent, isStreaming, userPrompt, ge
 
   const handleDownloadHtml = () => {
     if (code?.fullHtml) {
-      downloadHtml(code.fullHtml)
+      if (isQtMode) {
+        const blob = new Blob([code.fullHtml], { type: 'text/plain' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'dashboard_app.py'
+        a.click()
+        URL.revokeObjectURL(url)
+      } else {
+        downloadHtml(code.fullHtml)
+      }
     }
   }
 
@@ -70,17 +83,15 @@ export function CodeViewer({ code, streamingContent, isStreaming, userPrompt, ge
           <TabsList>
             <TabsTrigger value="full" className="gap-2">
               <FileCode2 className="h-4 w-4" />
-              Full HTML
+              {isQtMode ? 'Python' : 'Full HTML'}
             </TabsTrigger>
-            <TabsTrigger value="html" disabled={!code?.html}>
-              HTML
-            </TabsTrigger>
-            <TabsTrigger value="css" disabled={!code?.css}>
-              CSS
-            </TabsTrigger>
-            <TabsTrigger value="js" disabled={!code?.js}>
-              JS
-            </TabsTrigger>
+            {!isQtMode && (
+              <>
+                <TabsTrigger value="html" disabled={!code?.html}>HTML</TabsTrigger>
+                <TabsTrigger value="css" disabled={!code?.css}>CSS</TabsTrigger>
+                <TabsTrigger value="js" disabled={!code?.js}>JS</TabsTrigger>
+              </>
+            )}
           </TabsList>
 
           <div className="flex gap-2">
@@ -109,7 +120,7 @@ export function CodeViewer({ code, streamingContent, isStreaming, userPrompt, ge
               disabled={!code || isStreaming}
             >
               <Download className="mr-2 h-4 w-4" />
-              HTML
+              {isQtMode ? '.py' : 'HTML'}
             </Button>
             <Button
               variant="outline"

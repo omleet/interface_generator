@@ -441,6 +441,102 @@ function truncateContext(context: string, maxChars: number): string {
     '\n\n<!-- [context truncated to fit model window] -->'
 }
 
+// ─── Planning system prompt ───────────────────────────────────────────────────
+
+const PLANNING_SYSTEM_PROMPT = `<role>
+You are an expert AdminLTE 3 dashboard architect. Your job is to produce a clear, structured implementation plan for an AdminLTE 3 + Bootstrap 4 dashboard BEFORE any code is written. The plan will be reviewed and potentially edited by the user before generation starts.
+</role>
+
+<output_format>
+Output a concise, structured plan in plain text (no markdown code fences, no HTML). Use numbered sections and bullet points. The plan must cover:
+
+1. OVERVIEW — one sentence describing the dashboard's purpose.
+2. LAYOUT — sidebar navigation items, top navbar content.
+3. KPI WIDGETS — list each info-box/small-box with its metric name, unit, and sample value.
+4. CHARTS — for each chart: type (bar/line/pie/doughnut), title, axes/labels, and sample data series.
+5. TABLES — for each table: title, column headers, row count, and what each row represents.
+6. INTERACTIVITY — any buttons, filters, modals, or controls and what they do.
+7. COLOUR SCHEME — which AdminLTE colour tokens to use (bg-primary, bg-success, bg-warning, bg-danger, bg-info, bg-navy, etc.).
+8. DATA — confirm all data is realistic and domain-specific (no Lorem Ipsum).
+
+Keep the plan concise but complete. The developer reading it should know exactly what to build.
+</output_format>
+
+<constraints>
+- AdminLTE 3 + Bootstrap 4 ONLY.
+- No DataTables, Select2, SweetAlert, ApexCharts, Highcharts — Chart.js only.
+- No Tailwind, Bootstrap 5, Material UI, or any other framework.
+</constraints>`
+
+export interface PlanCallbacks {
+  onToken: (token: string) => void
+  onComplete: (plan: string) => void
+  onError: (error: Error) => void
+}
+
+export async function generatePlan(
+  prompt: string,
+  config: LLMConfig,
+  ragEngine: RAGEngine,
+  callbacks: PlanCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  // Get a small slice of RAG context so the plan references real AdminLTE components
+  let context = ''
+  if (ragEngine.isReady) {
+    try {
+      context = await ragEngine.getContext(prompt, 3)
+      context = truncateContext(context, 4000)
+    } catch {
+      // plan without context is still useful
+    }
+  }
+
+  const messages: LLMMessage[] = [
+    { role: 'system', content: PLANNING_SYSTEM_PROMPT },
+  ]
+
+  if (context) {
+    messages.push({
+      role: 'user',
+      content: `<reference_components>\n${context}\n</reference_components>`,
+    })
+    messages.push({
+      role: 'assistant',
+      content: 'Understood. I have the AdminLTE component reference ready.',
+    })
+  }
+
+  messages.push({
+    role: 'user',
+    content: `<request>
+Create a comprehensive implementation plan for the following AdminLTE 3 dashboard:
+
+${prompt.trim()}
+</request>
+
+Write the plan now. Do not write any HTML or code — only the structured plan text.`,
+  })
+
+  let fullPlan = ''
+
+  await generateCompletion(
+    config,
+    messages,
+    {
+      onToken: (token) => {
+        fullPlan += token
+        callbacks.onToken(token)
+      },
+      onComplete: () => {
+        callbacks.onComplete(fullPlan.trim())
+      },
+      onError: callbacks.onError,
+    },
+    signal,
+  )
+}
+
 // ─── Main generation function ─────────────────────────────────────────────────
 
 export async function generateDashboard(

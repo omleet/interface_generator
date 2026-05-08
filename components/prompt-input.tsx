@@ -3,13 +3,22 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { Sparkles, Loader2, Square, Search, X, ChevronRight, Zap, BarChart2, Thermometer, Wifi, Server, Factory, Wind, Droplets, Gauge, Activity, Shield, Cpu } from 'lucide-react'
+import { Sparkles, Loader2, Square, Search, X, ChevronRight, Zap, BarChart2, Thermometer, Wifi, Server, Factory, Wind, Droplets, Gauge, Activity, Shield, Cpu, ClipboardList, RefreshCw, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react'
+import { OutputFormatSelector, type OutputFormat } from '@/components/output-format-selector'
 
 interface PromptInputProps {
   onSubmit: (prompt: string) => void
+  onPlan?: (prompt: string) => void
+  onReplan?: (prompt: string, currentPlan: string) => void
   onCancel?: () => void
   isLoading: boolean
+  isPlanLoading?: boolean
   disabled?: boolean
+  plan?: string
+  onPlanChange?: (plan: string) => void
+  planState?: 'idle' | 'planning' | 'ready'
+  outputFormat?: OutputFormat
+  onOutputFormatChange?: (format: OutputFormat) => void
 }
 
 // ─── Example library ────────────────────────────────────────────────────────
@@ -156,6 +165,104 @@ const EXAMPLES: Example[] = [
   },
 ]
 
+const QT_EXAMPLES: Example[] = [
+  // ── SCADA / Process control ────────────────────────────────────────────────
+  {
+    id: 'qt-scada-overview',
+    prompt: 'PySide6 SCADA overview desktop application with real-time process values panel, valve and pump status indicators, alarm summary table, and a live-updating line chart for key process variables in a water treatment plant',
+    category: 'SCADA',
+    iconKey: 'gauge',
+    keywords: ['scada', 'process', 'valve', 'pump', 'water', 'treatment', 'plc', 'hmi', 'industrial', 'control'],
+  },
+  {
+    id: 'qt-plc-alarms',
+    prompt: 'PySide6 PLC alarm management desktop app with active alarm QTableWidget, severity colour coding (critical/warning/info), acknowledge button per row, alarm frequency bar chart, and alarm history scrollable list',
+    category: 'SCADA',
+    iconKey: 'shield',
+    keywords: ['plc', 'alarm', 'alert', 'fault', 'critical', 'warning', 'acknowledge', 'severity', 'industrial'],
+  },
+
+  // ── Sensors / IoT ──────────────────────────────────────────────────────────
+  {
+    id: 'qt-temp-humidity',
+    prompt: 'PySide6 temperature and humidity monitoring desktop dashboard with live sensor readings KPI cards, 24-hour historical line chart per zone, threshold alert badges, and a multi-zone comparison table with colour-coded status',
+    category: 'Sensors',
+    iconKey: 'thermometer',
+    keywords: ['temperature', 'humidity', 'sensor', 'hvac', 'climate', 'zone', 'threshold', 'iot', 'environment'],
+  },
+  {
+    id: 'qt-pressure-flow',
+    prompt: 'PySide6 pressure and flow rate monitoring desktop app with QProgressBar gauge indicators, trend line chart with min/max annotations, anomaly detection badges, and equipment health status cards with colour-coded QSS',
+    category: 'Sensors',
+    iconKey: 'gauge',
+    keywords: ['pressure', 'flow', 'rate', 'gauge', 'pipe', 'fluid', 'anomaly', 'trend', 'sensor'],
+  },
+  {
+    id: 'qt-iot-fleet',
+    prompt: 'PySide6 IoT device fleet management desktop application with device status QTableWidget, last-seen timestamps, firmware version column, connectivity status badges, and a refresh button that simulates live polling',
+    category: 'IoT',
+    iconKey: 'wifi',
+    keywords: ['iot', 'fleet', 'device', 'connectivity', 'firmware', 'gateway', 'mqtt', 'remote', 'batch'],
+  },
+
+  // ── Energy ─────────────────────────────────────────────────────────────────
+  {
+    id: 'qt-energy-consumption',
+    prompt: 'PySide6 energy consumption desktop dashboard with kWh KPI cards per zone, power factor progress bars, peak demand bar chart, cost breakdown pie chart, and a carbon footprint indicator with dark QSS theme',
+    category: 'Energy',
+    iconKey: 'zap',
+    keywords: ['energy', 'power', 'kwh', 'consumption', 'electricity', 'peak', 'demand', 'cost', 'carbon'],
+  },
+  {
+    id: 'qt-solar-plant',
+    prompt: 'PySide6 solar power plant monitoring desktop app with panel array output KPI cards, inverter status table, grid feed-in meter, irradiance vs generation dual-axis line chart, and daily yield summary bar chart',
+    category: 'Energy',
+    iconKey: 'zap',
+    keywords: ['solar', 'photovoltaic', 'pv', 'panel', 'inverter', 'grid', 'renewable', 'generation', 'irradiance'],
+  },
+  {
+    id: 'qt-hvac-control',
+    prompt: 'PySide6 HVAC control desktop application with zone temperature setpoints using QSpinBox, AHU status cards, chiller performance metrics, energy usage trend line chart, and fault summary panel with sidebar navigation',
+    category: 'Energy',
+    iconKey: 'wind',
+    keywords: ['hvac', 'heating', 'cooling', 'ventilation', 'ahu', 'chiller', 'setpoint', 'zone', 'building'],
+  },
+
+  // ── Manufacturing / OEE ───────────────────────────────────────────────────
+  {
+    id: 'qt-oee-dashboard',
+    prompt: 'PySide6 OEE (Overall Equipment Effectiveness) desktop dashboard with availability, performance, and quality QProgressBar gauges, shift comparison bar chart, downtime table with Pareto sorting, and production target tracker',
+    category: 'Manufacturing',
+    iconKey: 'factory',
+    keywords: ['oee', 'equipment', 'effectiveness', 'availability', 'performance', 'quality', 'downtime', 'shift', 'production'],
+  },
+  {
+    id: 'qt-conveyor-monitor',
+    prompt: 'PySide6 conveyor belt monitoring desktop app with belt speed KPI cards, motor current line chart, jam detection status indicators, throughput counter, and maintenance schedule QTableWidget',
+    category: 'Manufacturing',
+    iconKey: 'factory',
+    keywords: ['conveyor', 'belt', 'motor', 'manufacturing', 'throughput', 'speed', 'jam', 'assembly'],
+  },
+
+  // ── Infrastructure ────────────────────────────────────────────────────────
+  {
+    id: 'qt-server-monitoring',
+    prompt: 'PySide6 server infrastructure monitoring desktop dashboard with CPU, memory, and disk QProgressBar cards, network throughput line chart, top-process QTableWidget, uptime counters, and alert timeline list widget',
+    category: 'Infrastructure',
+    iconKey: 'server',
+    keywords: ['server', 'cpu', 'memory', 'disk', 'network', 'infrastructure', 'uptime', 'monitoring', 'devops'],
+  },
+
+  // ── Utilities ─────────────────────────────────────────────────────────────
+  {
+    id: 'qt-water-treatment',
+    prompt: 'PySide6 water treatment plant desktop dashboard with turbidity and chlorine KPI cards, dosing status indicators, pump operational table, flow rate trend chart, and compliance threshold colour-coded progress bars',
+    category: 'Utilities',
+    iconKey: 'droplets',
+    keywords: ['water', 'treatment', 'turbidity', 'chlorine', 'dosing', 'flow', 'pump', 'compliance', 'utility'],
+  },
+]
+
 // ─── Icon map ────────────────────────────────────────────────────────────────
 const ICON_MAP: Record<string, React.ElementType> = {
   gauge: Gauge,
@@ -182,6 +289,8 @@ const CATEGORY_COLOR: Record<string, { bg: string; text: string; dot: string }> 
   'Predictive Maintenance':{ bg: 'bg-rose-500/10',    text: 'text-rose-600 dark:text-rose-400',      dot: 'bg-rose-500' },
   'Infrastructure':        { bg: 'bg-slate-500/10',   text: 'text-slate-600 dark:text-slate-400',    dot: 'bg-slate-500' },
   'Utilities':             { bg: 'bg-teal-500/10',    text: 'text-teal-600 dark:text-teal-400',      dot: 'bg-teal-500' },
+  // Qt Python shares the same domain categories — colours are intentionally identical
+  // so that HTML and Qt examples feel visually consistent when switching formats
 }
 
 // ─── Fuzzy search ────────────────────────────────────────────────────────────
@@ -223,10 +332,10 @@ function trigramScore(query: string, target: string): number {
   return wordScore + trigramSim
 }
 
-function searchExamples(query: string): Example[] {
-  if (!query.trim()) return EXAMPLES
+function searchExamples(query: string, source: Example[]): Example[] {
+  if (!query.trim()) return source
 
-  const scored = EXAMPLES.map(ex => {
+  const scored = source.map(ex => {
     const corpus = [ex.prompt, ex.category, ...ex.keywords].join(' ')
     const score = trigramScore(query, corpus)
     return { ex, score }
@@ -259,12 +368,27 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
-export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptInputProps) {
+export function PromptInput({
+  onSubmit,
+  onPlan,
+  onReplan,
+  onCancel,
+  isLoading,
+  isPlanLoading = false,
+  disabled,
+  plan = '',
+  onPlanChange,
+  planState = 'idle',
+  outputFormat = 'html',
+  onOutputFormatChange,
+}: PromptInputProps) {
   const [prompt, setPrompt] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [isExamplesOpen, setIsExamplesOpen] = useState(false)
   const [focusedIndex, setFocusedIndex] = useState(-1)
+  const [isPlanExpanded, setIsPlanExpanded] = useState(true)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const planTextareaRef = useRef<HTMLTextAreaElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -298,11 +422,42 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
     }
   }, [isExamplesOpen])
 
-  const filteredExamples = useMemo(() => searchExamples(searchQuery), [searchQuery])
+  const examplesSource = outputFormat === 'qt-python' ? QT_EXAMPLES : EXAMPLES
+  const filteredExamples = useMemo(
+    () => searchExamples(searchQuery, examplesSource),
+    [searchQuery, examplesSource],
+  )
+
+  // Auto-resize plan textarea
+  useEffect(() => {
+    if (planTextareaRef.current && plan) {
+      planTextareaRef.current.style.height = 'auto'
+      planTextareaRef.current.style.height = `${Math.min(planTextareaRef.current.scrollHeight, 400)}px`
+    }
+  }, [plan])
+
+  // Auto-expand plan panel when plan arrives
+  useEffect(() => {
+    if (planState === 'ready' && plan) {
+      setIsPlanExpanded(true)
+    }
+  }, [planState, plan])
 
   const handleSubmit = () => {
     if (prompt.trim() && !isLoading && !disabled) {
       onSubmit(prompt.trim())
+    }
+  }
+
+  const handlePlan = () => {
+    if (prompt.trim() && !isLoading && !isPlanLoading && !disabled && onPlan) {
+      onPlan(prompt.trim())
+    }
+  }
+
+  const handleReplan = () => {
+    if (prompt.trim() && !isLoading && !isPlanLoading && !disabled && onReplan) {
+      onReplan(prompt.trim(), plan)
     }
   }
 
@@ -349,6 +504,13 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
 
   return (
     <div className="flex flex-col gap-4">
+      {/* ── Output format selector ── */}
+      <OutputFormatSelector
+        value={outputFormat}
+        onChange={(fmt) => onOutputFormatChange?.(fmt)}
+        disabled={isLoading || isPlanLoading || disabled}
+      />
+
       {/* ── Prompt textarea ── */}
       <div className="relative">
         <Textarea
@@ -356,34 +518,130 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Describe your idea… or choose an example below to use as a prompt..."
-          className="min-h-25 pr-24 resize-none"
-          disabled={isLoading || disabled}
+          placeholder={
+            outputFormat === 'qt-python'
+              ? 'Describe your Qt Python desktop interface… or choose an example below'
+              : 'Describe your idea… or choose an example below to use as a prompt...'
+          }
+          className="min-h-25 resize-none pb-14"
+          disabled={isLoading || isPlanLoading || disabled}
         />
-        {isLoading ? (
-          <Button
-            type="button"
-            onClick={onCancel}
-            disabled={!onCancel}
-            variant="destructive"
-            className="absolute bottom-3 right-3"
-            size="sm"
-          >
-            <Square className="mr-2 h-4 w-4 fill-current" />
-            Cancel
-          </Button>
-        ) : (
-          <Button
-            onClick={handleSubmit}
-            disabled={!prompt.trim() || disabled}
-            className="absolute bottom-3 right-3"
-            size="sm"
-          >
-            <Sparkles className="mr-2 h-4 w-4" />
-            Generate
-          </Button>
-        )}
+        {/* Action buttons row at bottom of textarea */}
+        <div className="absolute bottom-3 right-3 flex items-center gap-2">
+          {(isLoading || isPlanLoading) ? (
+            <Button
+              type="button"
+              onClick={onCancel}
+              disabled={!onCancel}
+              variant="destructive"
+              size="sm"
+            >
+              <Square className="mr-2 h-4 w-4 fill-current" />
+              Cancel
+            </Button>
+          ) : (
+            <>
+              {onPlan && (
+                <Button
+                  type="button"
+                  onClick={handlePlan}
+                  disabled={!prompt.trim() || disabled}
+                  variant="outline"
+                  size="sm"
+                >
+                  <ClipboardList className="mr-2 h-4 w-4" />
+                  Plan first
+                </Button>
+              )}
+              <Button
+                onClick={handleSubmit}
+                disabled={!prompt.trim() || disabled}
+                size="sm"
+              >
+                <Sparkles className="mr-2 h-4 w-4" />
+                Generate
+              </Button>
+            </>
+          )}
+        </div>
       </div>
+
+      {/* ── Plan panel ── */}
+      {(planState !== 'idle' || plan) && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          {/* Plan panel header */}
+          <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30">
+            <div className="flex items-center gap-2">
+              {planState === 'planning' || isPlanLoading ? (
+                <Loader2 className="h-3.5 w-3.5 text-primary animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+              )}
+              <span className="text-xs font-semibold text-foreground">
+                {planState === 'planning' || isPlanLoading
+                  ? 'Generating plan…'
+                  : outputFormat === 'qt-python'
+                    ? 'Qt interface plan — review and edit before generating'
+                    : 'Page plan — review and edit before generating'}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {planState === 'ready' && !isPlanLoading && (
+                <button
+                  type="button"
+                  onClick={handleReplan}
+                  disabled={isLoading || isPlanLoading || disabled || !prompt.trim()}
+                  title="Ask the LLM to re-verify and correct the plan"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Re-verify
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsPlanExpanded(v => !v)}
+                className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+                aria-label={isPlanExpanded ? 'Collapse plan' : 'Expand plan'}
+              >
+                {isPlanExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          {/* Plan textarea */}
+          {isPlanExpanded && (
+            <div className="p-3 flex flex-col gap-2">
+              <Textarea
+                ref={planTextareaRef}
+                value={plan}
+                onChange={(e) => onPlanChange?.(e.target.value)}
+                placeholder={isPlanLoading ? 'Plan is being generated…' : 'Your plan will appear here. You can edit it before generating.'}
+                className="min-h-32 resize-none font-mono text-xs leading-relaxed text-foreground/90 bg-muted/20 border-muted"
+                disabled={isPlanLoading || isLoading || disabled}
+                spellCheck={false}
+              />
+              {planState === 'ready' && !isPlanLoading && plan && (
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-muted-foreground">
+                    Edit the plan above, then click Generate to produce the page based on it.
+                  </p>
+                  <Button
+                    size="sm"
+                    onClick={handleSubmit}
+                    disabled={!prompt.trim() || disabled || isLoading}
+                    className="h-7 text-xs px-3"
+                  >
+                    <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                    Generate from plan
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
 
       {/* ── Try an example ── */}
       <div ref={panelRef} className="relative">
@@ -393,7 +651,7 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
           <button
             type="button"
             onClick={() => setIsExamplesOpen(o => !o)}
-            disabled={isLoading || disabled}
+            disabled={isLoading || isPlanLoading || disabled}
             className={`
               inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md
               transition-all duration-150 select-none
@@ -416,7 +674,7 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
         {/* Quick pill previews (shown when panel is closed) */}
         {!isExamplesOpen && (
           <div className="flex flex-wrap gap-1.5 mt-2">
-            {EXAMPLES.slice(0, 4).map((ex) => {
+            {examplesSource.slice(0, 4).map((ex) => {
               const Icon = ICON_MAP[ex.iconKey] ?? Gauge
               const col = CATEGORY_COLOR[ex.category] ?? CATEGORY_COLOR['Sensors']
               return (
@@ -446,7 +704,7 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
               disabled={isLoading || disabled}
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-primary/40 transition-all disabled:opacity-40"
             >
-              +{EXAMPLES.length - 4} more
+              +{examplesSource.length - 4} more
             </button>
           </div>
         )}
@@ -488,8 +746,12 @@ export function PromptInput({ onSubmit, onCancel, isLoading, disabled }: PromptI
               {filteredExamples.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-center px-4">
                   <Search className="h-8 w-8 text-muted-foreground/30 mb-2" />
-                  <p className="text-sm text-muted-foreground">No examples match <span className="font-medium text-foreground">"{searchQuery}"</span></p>
-                  <p className="text-xs text-muted-foreground/60 mt-1">Try terms like "sensor", "energy", "alarm", "OEE"…</p>
+                  <p className="text-sm text-muted-foreground">No {outputFormat === 'qt-python' ? 'Qt Python' : 'HTML'} examples match <span className="font-medium text-foreground">&quot;{searchQuery}&quot;</span></p>
+                  <p className="text-xs text-muted-foreground/60 mt-1">
+                    {outputFormat === 'qt-python'
+                      ? 'Try terms like "sensor", "energy", "alarm", "SCADA", "OEE"…'
+                      : 'Try terms like "sensor", "energy", "alarm", "OEE"…'}
+                  </p>
                 </div>
               ) : (
                 filteredExamples.map((ex, idx) => {
