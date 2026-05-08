@@ -18,9 +18,7 @@ import {
 } from '@/lib/llm-client'
 import { createRAGEngine, type RAGEngine, getIndexedCount, type RAGIndexProgress } from '@/lib/rag-engine'
 import { generateDashboard, generatePlan, createPreviewHtml, type GeneratedCode } from '@/lib/code-generator'
-import { generateQtDashboard, generateQtPlan, type QtGeneratedCode } from '@/lib/qt-python-generator'
-import type { OutputFormat } from '@/components/output-format-selector'
-import { LayoutDashboard, Eye, Code, Pencil } from 'lucide-react'
+import { LayoutDashboard, Eye, Pencil } from 'lucide-react'
 import { GrapesJsEditor } from '@/components/grapesjs-editor'
 
 export default function DashboardGenerator() {
@@ -52,9 +50,6 @@ export default function DashboardGenerator() {
   const [isEditorOpen, setIsEditorOpen] = useState(false)
   const [editableCode, setEditableCode] = useState<GeneratedCode | null>(null)
 
-  // Output format
-  const [outputFormat, setOutputFormat] = useState<OutputFormat>('html')
-
   // Plan State
   const [plan, setPlan] = useState<string>('')
   const [planState, setPlanState] = useState<'idle' | 'planning' | 'ready'>('idle')
@@ -85,7 +80,7 @@ export default function DashboardGenerator() {
 
   // Handle plan generation
   const handlePlan = useCallback(async (prompt: string) => {
-    if (outputFormat === 'html' && !ragEngine) {
+    if (!ragEngine) {
       setGenerationError('RAG engine not ready. Please wait.')
       setGenerationState('error')
       return
@@ -121,11 +116,7 @@ export default function DashboardGenerator() {
     }
 
     try {
-      if (outputFormat === 'qt-python') {
-        await generateQtPlan(prompt, llmConfig, planCallbacks, controller.signal)
-      } else {
-        await generatePlan(prompt, llmConfig, ragEngine!, planCallbacks, controller.signal)
-      }
+      await generatePlan(prompt, llmConfig, ragEngine!, planCallbacks, controller.signal)
     } catch (error) {
       if (controller.signal.aborted) return
       setGenerationError(error instanceof Error ? error.message : 'Plan generation failed')
@@ -137,11 +128,9 @@ export default function DashboardGenerator() {
         abortControllerRef.current = null
       }
     }
-  }, [ragEngine, llmConfig, outputFormat])
-
-  // Handle plan re-verification
+  }, [ragEngine, llmConfig])
   const handleReplan = useCallback(async (prompt: string, currentPlan: string) => {
-    if (outputFormat === 'html' && !ragEngine) return
+    if (!ragEngine) return
 
     abortControllerRef.current?.abort()
     const controller = new AbortController()
@@ -152,9 +141,7 @@ export default function DashboardGenerator() {
     setIsPlanLoading(true)
     setGenerationError('')
 
-    const constraint = outputFormat === 'qt-python'
-      ? 'PySide6 Qt6 Python constraints'
-      : 'AdminLTE 3 + Bootstrap 4 constraints'
+    const constraint = 'AdminLTE 3 + Bootstrap 4 constraints'
 
     const replanPrompt = `${prompt.trim()}
 
@@ -185,11 +172,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
     }
 
     try {
-      if (outputFormat === 'qt-python') {
-        await generateQtPlan(replanPrompt, llmConfig, replanCallbacks, controller.signal)
-      } else {
-        await generatePlan(replanPrompt, llmConfig, ragEngine!, replanCallbacks, controller.signal)
-      }
+      await generatePlan(replanPrompt, llmConfig, ragEngine!, replanCallbacks, controller.signal)
     } catch (error) {
       if (controller.signal.aborted) return
       setGenerationError(error instanceof Error ? error.message : 'Re-verification failed')
@@ -201,11 +184,11 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
         abortControllerRef.current = null
       }
     }
-  }, [ragEngine, llmConfig, outputFormat])
+  }, [ragEngine, llmConfig])
 
   // Handle prompt submission
   const handleSubmit = useCallback(async (prompt: string) => {
-    if (outputFormat === 'html' && !ragEngine) {
+    if (!ragEngine) {
       setGenerationError('RAG engine not ready. Please wait.')
       setGenerationState('error')
       return
@@ -240,67 +223,34 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
       : prompt
 
     try {
-      if (outputFormat === 'qt-python') {
-        // ── Qt Python path ────────────────────────────────────────────────
-        await generateQtDashboard(
-          effectivePrompt,
-          llmConfig,
-          {
-            onToken: (token) => {
-              if (controller.signal.aborted) return
-              flushSync(() => { setStreamingContent((prev) => prev + token) })
-            },
-            onRefinementStart: () => {
-              if (controller.signal.aborted) return
-              setGenerationState('refining')
-            },
-            onComplete: (qtCode: QtGeneratedCode) => {
-              if (controller.signal.aborted) return
-              const endTime = Date.now()
-              setGenerationTimeMs(endTime - startTime)
-              // Store Qt result using fullHtml field so existing viewers work
-              setGeneratedCode(qtCode as unknown as GeneratedCode)
-              setGenerationState('complete')
-            },
-            onError: (error) => {
-              if (controller.signal.aborted) return
-              setGenerationError(error.message)
-              setGenerationState('error')
-            },
+      await generateDashboard(
+        effectivePrompt,
+        llmConfig,
+        ragEngine!,
+        {
+          onToken: (token) => {
+            if (controller.signal.aborted) return
+            flushSync(() => { setStreamingContent((prev) => prev + token) })
           },
-          controller.signal,
-        )
-      } else {
-        // ── HTML / AdminLTE path ──────────────────────────────────────────
-        await generateDashboard(
-          effectivePrompt,
-          llmConfig,
-          ragEngine!,
-          {
-            onToken: (token) => {
-              if (controller.signal.aborted) return
-              flushSync(() => { setStreamingContent((prev) => prev + token) })
-            },
-            onRefinementStart: () => {
-              if (controller.signal.aborted) return
-              setGenerationState('refining')
-            },
-            onComplete: (code) => {
-              if (controller.signal.aborted) return
-              const endTime = Date.now()
-              setGenerationTimeMs(endTime - startTime)
-              setGeneratedCode(code)
-              setGenerationState('complete')
-            },
-            onError: (error) => {
-              if (controller.signal.aborted) return
-              setGenerationError(error.message)
-              setGenerationState('error')
-            },
+          onRefinementStart: () => {
+            if (controller.signal.aborted) return
+            setGenerationState('refining')
           },
-          controller.signal,
-        )
-      }
+          onComplete: (code) => {
+            if (controller.signal.aborted) return
+            const endTime = Date.now()
+            setGenerationTimeMs(endTime - startTime)
+            setGeneratedCode(code)
+            setGenerationState('complete')
+          },
+          onError: (error) => {
+            if (controller.signal.aborted) return
+            setGenerationError(error.message)
+            setGenerationState('error')
+          },
+        },
+        controller.signal,
+      )
     } catch (error) {
       if (controller.signal.aborted) return
       setGenerationError(error instanceof Error ? error.message : 'Generation failed')
@@ -310,21 +260,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
         abortControllerRef.current = null
       }
     }
-  }, [ragEngine, llmConfig, outputFormat, plan])
-
-  // Reset plan and generation state when output format changes
-  const handleOutputFormatChange = useCallback((fmt: OutputFormat) => {
-    abortControllerRef.current?.abort()
-    abortControllerRef.current = null
-    setOutputFormat(fmt)
-    setPlan('')
-    setPlanState('idle')
-    setIsPlanLoading(false)
-    setGenerationState('idle')
-    setGenerationError('')
-    setStreamingContent('')
-    setGeneratedCode(null)
-  }, [])
+  }, [ragEngine, llmConfig, plan])
 
   // Cancel an in-flight generation or plan
   const handleCancel = useCallback(() => {
@@ -384,7 +320,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <RAGStatus status={ragStatus} indexedCount={indexedCount} outputFormat={outputFormat} />
+              <RAGStatus status={ragStatus} indexedCount={indexedCount} />
               <LLMSettings config={llmConfig} onConfigChange={setLLMConfig} />
             </div>
           </div>
@@ -393,11 +329,11 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-200px)]">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-200px)]">
           {/* Left Panel - Input */}
           <div className="flex flex-col gap-4">
             <Card>
-              <CardHeader className="pb-3">
+              <CardHeader className="pb-1">
                 <CardTitle className="text-lg">Describe The Interface</CardTitle>
               </CardHeader>
               <CardContent>
@@ -408,12 +344,10 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
                   onCancel={handleCancel}
                   isLoading={isGenerating}
                   isPlanLoading={isPlanLoading}
-                  disabled={outputFormat === 'html' && ragStatus.status !== 'ready'}
+                  disabled={ragStatus.status !== 'ready'}
                   plan={plan}
                   onPlanChange={setPlan}
                   planState={planState}
-                  outputFormat={outputFormat}
-                  onOutputFormatChange={handleOutputFormatChange}
                 />
               </CardContent>
             </Card>
@@ -443,7 +377,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
                   Preview
                 </CardTitle>
                 <div className="flex items-center gap-2">
-                  {generatedCode && outputFormat === 'html' && (
+                  {generatedCode && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -458,22 +392,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
               </div>
             </CardHeader>
             <CardContent className="p-0 h-[calc(100%-60px)]">
-              {outputFormat === 'qt-python' ? (
-                <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground px-6 text-center">
-                  <Code className="h-12 w-12 opacity-30" />
-                  <p className="text-sm font-medium">Qt Python — no browser preview</p>
-                  <p className="text-xs max-w-xs leading-relaxed">
-                    PySide6 applications run as native desktop apps. Copy or download the generated
-                    <code className="mx-1 px-1 py-0.5 bg-muted rounded text-xs font-mono">.py</code>
-                    file and run it with:
-                    <code className="block mt-1.5 px-2 py-1 bg-muted rounded text-xs font-mono text-foreground">
-                      python dashboard_app.py
-                    </code>
-                  </p>
-                </div>
-              ) : (
-                <CodePreview html={previewHtml} className="h-full" />
-              )}
+              <CodePreview html={previewHtml} className="h-full" />
             </CardContent>
           </Card>
         </div>

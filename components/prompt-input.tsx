@@ -4,7 +4,6 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Sparkles, Loader2, Square, Search, X, ChevronRight, Zap, BarChart2, Thermometer, Wifi, Server, Factory, Wind, Droplets, Gauge, Activity, Shield, Cpu, ClipboardList, RefreshCw, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react'
-import { OutputFormatSelector, type OutputFormat } from '@/components/output-format-selector'
 
 interface PromptInputProps {
   onSubmit: (prompt: string) => void
@@ -17,8 +16,6 @@ interface PromptInputProps {
   plan?: string
   onPlanChange?: (plan: string) => void
   planState?: 'idle' | 'planning' | 'ready'
-  outputFormat?: OutputFormat
-  onOutputFormatChange?: (format: OutputFormat) => void
 }
 
 // ─── Example library ────────────────────────────────────────────────────────
@@ -165,103 +162,6 @@ const EXAMPLES: Example[] = [
   },
 ]
 
-const QT_EXAMPLES: Example[] = [
-  // ── SCADA / Process control ────────────────────────────────────────────────
-  {
-    id: 'qt-scada-overview',
-    prompt: 'PySide6 SCADA overview desktop application with real-time process values panel, valve and pump status indicators, alarm summary table, and a live-updating line chart for key process variables in a water treatment plant',
-    category: 'SCADA',
-    iconKey: 'gauge',
-    keywords: ['scada', 'process', 'valve', 'pump', 'water', 'treatment', 'plc', 'hmi', 'industrial', 'control'],
-  },
-  {
-    id: 'qt-plc-alarms',
-    prompt: 'PySide6 PLC alarm management desktop app with active alarm QTableWidget, severity colour coding (critical/warning/info), acknowledge button per row, alarm frequency bar chart, and alarm history scrollable list',
-    category: 'SCADA',
-    iconKey: 'shield',
-    keywords: ['plc', 'alarm', 'alert', 'fault', 'critical', 'warning', 'acknowledge', 'severity', 'industrial'],
-  },
-
-  // ── Sensors / IoT ──────────────────────────────────────────────────────────
-  {
-    id: 'qt-temp-humidity',
-    prompt: 'PySide6 temperature and humidity monitoring desktop dashboard with live sensor readings KPI cards, 24-hour historical line chart per zone, threshold alert badges, and a multi-zone comparison table with colour-coded status',
-    category: 'Sensors',
-    iconKey: 'thermometer',
-    keywords: ['temperature', 'humidity', 'sensor', 'hvac', 'climate', 'zone', 'threshold', 'iot', 'environment'],
-  },
-  {
-    id: 'qt-pressure-flow',
-    prompt: 'PySide6 pressure and flow rate monitoring desktop app with QProgressBar gauge indicators, trend line chart with min/max annotations, anomaly detection badges, and equipment health status cards with colour-coded QSS',
-    category: 'Sensors',
-    iconKey: 'gauge',
-    keywords: ['pressure', 'flow', 'rate', 'gauge', 'pipe', 'fluid', 'anomaly', 'trend', 'sensor'],
-  },
-  {
-    id: 'qt-iot-fleet',
-    prompt: 'PySide6 IoT device fleet management desktop application with device status QTableWidget, last-seen timestamps, firmware version column, connectivity status badges, and a refresh button that simulates live polling',
-    category: 'IoT',
-    iconKey: 'wifi',
-    keywords: ['iot', 'fleet', 'device', 'connectivity', 'firmware', 'gateway', 'mqtt', 'remote', 'batch'],
-  },
-
-  // ── Energy ─────────────────────────────────────────────────────────────────
-  {
-    id: 'qt-energy-consumption',
-    prompt: 'PySide6 energy consumption desktop dashboard with kWh KPI cards per zone, power factor progress bars, peak demand bar chart, cost breakdown pie chart, and a carbon footprint indicator with dark QSS theme',
-    category: 'Energy',
-    iconKey: 'zap',
-    keywords: ['energy', 'power', 'kwh', 'consumption', 'electricity', 'peak', 'demand', 'cost', 'carbon'],
-  },
-  {
-    id: 'qt-solar-plant',
-    prompt: 'PySide6 solar power plant monitoring desktop app with panel array output KPI cards, inverter status table, grid feed-in meter, irradiance vs generation dual-axis line chart, and daily yield summary bar chart',
-    category: 'Energy',
-    iconKey: 'zap',
-    keywords: ['solar', 'photovoltaic', 'pv', 'panel', 'inverter', 'grid', 'renewable', 'generation', 'irradiance'],
-  },
-  {
-    id: 'qt-hvac-control',
-    prompt: 'PySide6 HVAC control desktop application with zone temperature setpoints using QSpinBox, AHU status cards, chiller performance metrics, energy usage trend line chart, and fault summary panel with sidebar navigation',
-    category: 'Energy',
-    iconKey: 'wind',
-    keywords: ['hvac', 'heating', 'cooling', 'ventilation', 'ahu', 'chiller', 'setpoint', 'zone', 'building'],
-  },
-
-  // ── Manufacturing / OEE ───────────────────────────────────────────────────
-  {
-    id: 'qt-oee-dashboard',
-    prompt: 'PySide6 OEE (Overall Equipment Effectiveness) desktop dashboard with availability, performance, and quality QProgressBar gauges, shift comparison bar chart, downtime table with Pareto sorting, and production target tracker',
-    category: 'Manufacturing',
-    iconKey: 'factory',
-    keywords: ['oee', 'equipment', 'effectiveness', 'availability', 'performance', 'quality', 'downtime', 'shift', 'production'],
-  },
-  {
-    id: 'qt-conveyor-monitor',
-    prompt: 'PySide6 conveyor belt monitoring desktop app with belt speed KPI cards, motor current line chart, jam detection status indicators, throughput counter, and maintenance schedule QTableWidget',
-    category: 'Manufacturing',
-    iconKey: 'factory',
-    keywords: ['conveyor', 'belt', 'motor', 'manufacturing', 'throughput', 'speed', 'jam', 'assembly'],
-  },
-
-  // ── Infrastructure ────────────────────────────────────────────────────────
-  {
-    id: 'qt-server-monitoring',
-    prompt: 'PySide6 server infrastructure monitoring desktop dashboard with CPU, memory, and disk QProgressBar cards, network throughput line chart, top-process QTableWidget, uptime counters, and alert timeline list widget',
-    category: 'Infrastructure',
-    iconKey: 'server',
-    keywords: ['server', 'cpu', 'memory', 'disk', 'network', 'infrastructure', 'uptime', 'monitoring', 'devops'],
-  },
-
-  // ── Utilities ─────────────────────────────────────────────────────────────
-  {
-    id: 'qt-water-treatment',
-    prompt: 'PySide6 water treatment plant desktop dashboard with turbidity and chlorine KPI cards, dosing status indicators, pump operational table, flow rate trend chart, and compliance threshold colour-coded progress bars',
-    category: 'Utilities',
-    iconKey: 'droplets',
-    keywords: ['water', 'treatment', 'turbidity', 'chlorine', 'dosing', 'flow', 'pump', 'compliance', 'utility'],
-  },
-]
 
 // ─── Icon map ────────────────────────────────────────────────────────────────
 const ICON_MAP: Record<string, React.ElementType> = {
@@ -379,8 +279,6 @@ export function PromptInput({
   plan = '',
   onPlanChange,
   planState = 'idle',
-  outputFormat = 'html',
-  onOutputFormatChange,
 }: PromptInputProps) {
   const [prompt, setPrompt] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
@@ -422,7 +320,7 @@ export function PromptInput({
     }
   }, [isExamplesOpen])
 
-  const examplesSource = outputFormat === 'qt-python' ? QT_EXAMPLES : EXAMPLES
+  const examplesSource = EXAMPLES
   const filteredExamples = useMemo(
     () => searchExamples(searchQuery, examplesSource),
     [searchQuery, examplesSource],
@@ -504,13 +402,6 @@ export function PromptInput({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* ── Output format selector ── */}
-      <OutputFormatSelector
-        value={outputFormat}
-        onChange={(fmt) => onOutputFormatChange?.(fmt)}
-        disabled={isLoading || isPlanLoading || disabled}
-      />
-
       {/* ── Prompt textarea ── */}
       <div className="relative">
         <Textarea
@@ -518,11 +409,7 @@ export function PromptInput({
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={
-            outputFormat === 'qt-python'
-              ? 'Describe your Qt Python desktop interface… or choose an example below'
-              : 'Describe your idea… or choose an example below to use as a prompt...'
-          }
+          placeholder="Describe your idea… or choose an example below to use as a prompt..."
           className="min-h-25 resize-none pb-14"
           disabled={isLoading || isPlanLoading || disabled}
         />
@@ -580,9 +467,7 @@ export function PromptInput({
               <span className="text-xs font-semibold text-foreground">
                 {planState === 'planning' || isPlanLoading
                   ? 'Generating plan…'
-                  : outputFormat === 'qt-python'
-                    ? 'Qt interface plan — review and edit before generating'
-                    : 'Page plan — review and edit before generating'}
+                  : 'Page plan — review and edit before generating'}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -746,11 +631,9 @@ export function PromptInput({
               {filteredExamples.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-center px-4">
                   <Search className="h-8 w-8 text-muted-foreground/30 mb-2" />
-                  <p className="text-sm text-muted-foreground">No {outputFormat === 'qt-python' ? 'Qt Python' : 'HTML'} examples match <span className="font-medium text-foreground">&quot;{searchQuery}&quot;</span></p>
+                  <p className="text-sm text-muted-foreground">No HTML examples match <span className="font-medium text-foreground">&quot;{searchQuery}&quot;</span></p>
                   <p className="text-xs text-muted-foreground/60 mt-1">
-                    {outputFormat === 'qt-python'
-                      ? 'Try terms like "sensor", "energy", "alarm", "SCADA", "OEE"…'
-                      : 'Try terms like "sensor", "energy", "alarm", "OEE"…'}
+                    Try terms like &quot;sensor&quot;, &quot;energy&quot;, &quot;alarm&quot;, &quot;OEE&quot;…
                   </p>
                 </div>
               ) : (

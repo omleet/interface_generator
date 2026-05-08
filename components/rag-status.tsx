@@ -4,30 +4,13 @@ import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { Database, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 import type { RAGIndexProgress } from '@/lib/rag-engine'
-import type { OutputFormat } from '@/components/output-format-selector'
-import { QT_KNOWLEDGE_COUNT } from '@/lib/qt-python-generator'
 
 interface RAGStatusProps {
   status: RAGIndexProgress
   indexedCount: number
-  outputFormat?: OutputFormat
 }
 
-export function RAGStatus({ status, indexedCount, outputFormat = 'html' }: RAGStatusProps) {
-  // Qt Python has its own built-in knowledge base — always ready, no async indexing needed
-  if (outputFormat === 'qt-python') {
-    return (
-      <Badge
-        variant="secondary"
-        className="gap-1.5 bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100"
-        title="Built-in PySide6 snippet library: window skeleton, KPI cards, QtCharts, QTableWidget, sidebar, buttons, progress bars, dark QSS"
-      >
-        <CheckCircle2 className="h-3 w-3" />
-        Qt RAG Ready ({QT_KNOWLEDGE_COUNT} snippets)
-      </Badge>
-    )
-  }
-
+export function RAGStatus({ status, indexedCount }: RAGStatusProps) {
   if (status.status === 'ready') {
     return (
       <Badge
