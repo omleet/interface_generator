@@ -1,0 +1,1076 @@
+import type { LLMConfig, LLMMessage } from './llm-client'
+import { generateCompletion } from './llm-client'
+import type { StreamlitRAGEngine } from './streamlit-rag-engine'
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface GeneratedPythonCode {
+  /** The complete Python source code (app.py) */
+  python: string
+  /** requirements.txt content */
+  requirements: string
+}
+
+export interface PythonGenerationCallbacks {
+  onToken: (token: string) => void
+  onComplete: (code: GeneratedPythonCode) => void
+  onError: (error: Error) => void
+  onRefinementStart?: () => void
+}
+
+export interface PythonPlanCallbacks {
+  onToken: (token: string) => void
+  onComplete: (plan: string) => void
+  onError: (error: Error) => void
+}
+
+// ─── System prompts ───────────────────────────────────────────────────────────
+
+const PYTHON_SYSTEM_PROMPT = `<role>
+You are an expert Streamlit developer. You write complete, production-ready Python applications using EXCLUSIVELY the Streamlit framework (https://streamlit.io). Every file you output runs correctly with "streamlit run app.py" without any modification.
+</role>
+
+<output_format>
+Output ONLY raw Python code — absolutely no markdown code fences, no explanation, no preamble, no postamble.
+The very first line of your response MUST be an import statement (e.g. "import streamlit as st").
+NEVER write triple backticks anywhere in your output.
+</output_format>
+
+<framework_lock>
+Use Streamlit ONLY. Do not import or use any other web framework (Flask, Django, FastAPI, Gradio, Tkinter, PyQt, Dash, Panel, etc.).
+
+
+ALLOWED — the core Streamlit API you may use:
+  Page config:   st.set_page_config(page_title=..., page_icon=..., layout='wide')
+  Text:          st.title(), st.header(), st.subheader(), st.text(), st.markdown(), st.caption(), st.code(), st.latex()
+  Data display:  st.dataframe(), st.table(), st.json(), st.metric()
+  Charts:        st.line_chart(), st.bar_chart(), st.area_chart(), st.scatter_chart()
+                 st.plotly_chart(), st.altair_chart(), st.pyplot()
+  Media:         st.image(), st.audio(), st.video()
+  Input widgets: st.button(), st.checkbox(), st.radio(), st.selectbox(), st.multiselect()
+                 st.slider(), st.select_slider(), st.text_input(), st.number_input()
+                 st.text_area(), st.date_input(), st.time_input(), st.color_picker()
+                 st.file_uploader(), st.camera_input(), st.download_button()
+  Feedback:      st.progress(), st.spinner(), st.balloons(), st.snow(), st.toast()
+                 st.success(), st.info(), st.warning(), st.error(), st.exception()
+  Layout:        st.sidebar, st.columns(), st.tabs(), st.expander(), st.container()
+                 st.empty(), st.popover()
+  State:         st.session_state
+  Control flow:  st.stop(), st.rerun()
+  Forms:         st.form(), st.form_submit_button()
+  Cache:         @st.cache_data, @st.cache_resource
+
+CORRECT CALL SIGNATURES — use these EXACTLY:
+  st.set_page_config(page_title='My App', page_icon='📊', layout='wide')
+  st.metric(label='Revenue', value='$1,234', delta='+12%')
+  col1, col2, col3 = st.columns(3)
+  with col1:
+      st.metric('Users', '4,521', '+8%')
+  tab1, tab2 = st.tabs(['Overview', 'Details'])
+  with tab1:
+      st.dataframe(df, use_container_width=True)
+  with st.sidebar:
+      st.header('Filters')
+      selected = st.selectbox('Category', options=['All', 'A', 'B'])
+  with st.expander('Show details'):
+      st.write('More info here')
+  with st.form('my_form'):
+      name = st.text_input('Name')
+      submitted = st.form_submit_button('Submit')
+      if submitted:
+          st.success(f'Hello, {name}!')
+  if st.button('Click me'):
+      st.toast('Button clicked!', icon='✅')
+
+STREAMLIT DATA PATTERNS — use pandas for tabular data:
+  import pandas as pd
+  df = pd.DataFrame(data_list)                    # from list of dicts
+  st.dataframe(df, use_container_width=True)      # interactive table
+  st.bar_chart(df.set_index('category')['value']) # quick chart from DataFrame
+  # For plotly (richer charts):
+  import plotly.express as px
+  fig = px.bar(df, x='month', y='revenue', title='Monthly Revenue')
+  st.plotly_chart(fig, use_container_width=True)
+
+SESSION STATE PATTERN:
+  if 'counter' not in st.session_state:
+      st.session_state.counter = 0
+  if st.button('Increment'):
+      st.session_state.counter += 1
+  st.write(f"Count: {st.session_state.counter}")
+
+SIDEBAR PATTERN — always add navigation/filters to sidebar:
+  with st.sidebar:
+      st.title('Navigation')
+      page = st.radio('Go to', ['Dashboard', 'Data', 'Settings'])
+      st.divider()
+      st.header('Filters')
+      date_range = st.date_input('Date range', value=[])
+</framework_lock>
+
+<core_principles>
+1. COMPLETENESS — the app must run as-is. No TODOs, no placeholder text, no missing logic.
+2. REALISTIC DATA — use realistic, domain-specific sample data. Use pandas DataFrames built from inline Python lists. Never "Lorem ipsum".
+3. PAGE CONFIG — always call st.set_page_config() as the VERY FIRST Streamlit call, before any other st.* call.
+4. LAYOUT — use st.sidebar for navigation/filters; use st.columns() for KPI metrics at the top; use st.tabs() to organise content sections.
+5. INTERACTIVITY — every button must do something visible (st.success, st.toast, st.balloons, update session_state).
+6. CHARTS — prefer plotly_express charts (px.bar, px.line, px.pie, px.scatter) wrapped in st.plotly_chart() for rich, styled visuals.
+7. STRUCTURE — imports -> page config -> data constants -> helper functions -> sidebar -> main content.
+8. STATE — use st.session_state for any mutable values that persist across reruns.
+</core_principles>
+
+<layout_rules>
+- Top of every app:
+    import streamlit as st
+    import pandas as pd
+    import plotly.express as px
+    st.set_page_config(page_title='App Title', page_icon='📊', layout='wide')
+
+- KPI metrics row:
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric('Total Revenue', '$81,550', '+12%')
+    col2.metric('Active Users', '4,521', '+8%')
+    col3.metric('Orders', '124', '-3%')
+    col4.metric('Satisfaction', '94%', '+2%')
+
+- Sidebar:
+    with st.sidebar:
+        st.header('Filters')
+        selected_status = st.selectbox('Status', ['All', 'Active', 'Inactive'])
+
+- Tabs:
+    tab1, tab2 = st.tabs(['📈 Charts', '📋 Data'])
+    with tab1:
+        fig = px.bar(df, x='month', y='revenue')
+        st.plotly_chart(fig, use_container_width=True)
+    with tab2:
+        st.dataframe(df, use_container_width=True)
+</layout_rules>
+
+<python_rules>
+- All imports at the very top (streamlit, pandas, plotly.express, etc.).
+- st.set_page_config() immediately after imports — BEFORE any other st.* call.
+- Data constants (lists, dicts, DataFrames) defined at module level, AFTER page config.
+- Helper functions defined before the main app body.
+- The app body is module-level code (no main() function needed; Streamlit reruns the whole script on each interaction).
+- Use @st.cache_data to decorate functions that load/process data for performance.
+- Use st.session_state for any mutable state.
+- No "if __name__ == '__main__':" block needed — Streamlit handles the entry point automatically.
+</python_rules>
+
+<constraints>
+NEVER:
+- Output markdown code fences (triple backticks)
+- Add text before the first import line or after the last st.* call
+- Use TODO, placeholder, or stub code
+- Call st.set_page_config() anywhere except as the very first st.* call
+- Import any non-Streamlit web framework (Flask, FastAPI, Gradio, Dash, etc.)
+- Leave unclosed string literals — every opening ' or " must have a matching closing quote on the same logical line
+
+PYTHON SYNTAX RULES (critical — code must parse cleanly):
+- Dict keys must be properly quoted: {'name': 'John'} — never {'name: 'John'} (missing closing quote on the key).
+- Every opening quote (' or ") must have a matching closing quote of the same type before the next : , } or end of line.
+- f-strings: f"text {var}" — braces and quotes must balance.
+- Triple-quoted strings must be opened and closed with the same triple sequence.
+- Parentheses, brackets, and braces must balance across the whole file.
+
+CURRENT API RULES (avoid removed/deprecated symbols — they raise AttributeError at runtime):
+- Styling cells: use df.style.map(fn, subset=[...]) — NEVER Styler.applymap(...) (removed in pandas 2.1+).
+- Element-wise on DataFrame: use df.map(fn) — NEVER df.applymap(fn) (deprecated in pandas 2.1+).
+- Appending rows: use pd.concat([df, other], ignore_index=True) — NEVER df.append(...) (removed in pandas 2.0).
+- Rerun: use st.rerun() — NEVER st.experimental_rerun().
+- Query params: use st.query_params — NEVER st.experimental_get_query_params() / st.experimental_set_query_params().
+
+UNIQUE WIDGET KEYS (critical — duplicates raise StreamlitDuplicateElementId at runtime):
+- EVERY interactive widget (st.button, st.download_button, st.checkbox, st.radio, st.selectbox, st.multiselect, st.slider, st.select_slider, st.text_input, st.text_area, st.number_input, st.date_input, st.time_input, st.file_uploader, st.color_picker, st.toggle, st.form_submit_button) MUST receive a unique key='...' argument when the same widget type might appear more than once (e.g. multiple buttons with the same label, buttons inside loops, repeated controls across tabs/columns).
+- When in doubt, ALWAYS pass a unique key. Example: st.button('▶️ Power ON', key='power_on_machine_a'), st.button('▶️ Power ON', key='power_on_machine_b').
+
+ALWAYS:
+- Provide 6-10 rows of realistic sample data in every st.dataframe()
+- Give every plotly chart a realistic, domain-specific dataset
+- Make every button click produce a visible result (st.success, st.toast, st.balloons)
+- Use layout='wide' in set_page_config for dashboard-style apps
+</constraints>
+
+<example>
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+
+st.set_page_config(page_title='Sales Dashboard', page_icon='📊', layout='wide')
+
+ORDERS = [
+    {'id': 1, 'customer': 'Acme Corp', 'product': 'Server Rack', 'amount': 4200, 'status': 'Delivered'},
+    {'id': 2, 'customer': 'Globex Ltd', 'product': 'Workstation', 'amount': 1850, 'status': 'Pending'},
+    {'id': 3, 'customer': 'Initech', 'product': 'Network Switch', 'amount': 3100, 'status': 'Shipped'},
+    {'id': 4, 'customer': 'Umbrella', 'product': 'Storage Array', 'amount': 7600, 'status': 'Delivered'},
+    {'id': 5, 'customer': 'Cyberdyne', 'product': 'GPU Cluster', 'amount': 12400, 'status': 'Processing'},
+    {'id': 6, 'customer': 'Stark Industries', 'product': 'UPS System', 'amount': 5300, 'status': 'Delivered'},
+]
+
+MONTHLY = pd.DataFrame({
+    'Month': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+    'Revenue': [12500, 18300, 15600, 21200, 19800, 24100],
+    'Orders': [42, 61, 53, 70, 66, 80],
+})
+
+df_orders = pd.DataFrame(ORDERS)
+
+with st.sidebar:
+    st.title('📊 Sales Dashboard')
+    st.divider()
+    st.header('Filters')
+    status_filter = st.selectbox('Order Status', ['All', 'Delivered', 'Pending', 'Shipped', 'Processing'])
+    st.divider()
+    if st.button('🎉 Celebrate Q2!'):
+        st.balloons()
+
+st.title('Sales Dashboard')
+st.caption('Real-time overview of orders and revenue')
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric('Total Revenue', '$81,550', '+14%')
+col2.metric('Total Orders', '124', '+6%')
+col3.metric('Delivered', '89', '+9%')
+col4.metric('Avg. Order Value', '$658', '+7%')
+
+st.divider()
+
+tab1, tab2 = st.tabs(['📈 Charts', '📋 Orders'])
+
+with tab1:
+    col_a, col_b = st.columns(2)
+    with col_a:
+        fig_rev = px.bar(MONTHLY, x='Month', y='Revenue', title='Monthly Revenue', color='Revenue',
+                         color_continuous_scale='Blues')
+        st.plotly_chart(fig_rev, use_container_width=True)
+    with col_b:
+        status_counts = df_orders['status'].value_counts().reset_index()
+        status_counts.columns = ['Status', 'Count']
+        fig_pie = px.pie(status_counts, names='Status', values='Count', title='Orders by Status')
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+with tab2:
+    filtered = df_orders if status_filter == 'All' else df_orders[df_orders['status'] == status_filter]
+    st.dataframe(filtered, use_container_width=True, hide_index=True)
+    st.caption(f'Showing {len(filtered)} of {len(df_orders)} orders')
+</example>`
+
+// ─── Refinement prompt ────────────────────────────────────────────────────────
+
+const PYTHON_REFINEMENT_SYSTEM_PROMPT = `<role>
+You are a senior Streamlit code reviewer and debugger. You receive a Python/Streamlit application that may have runtime errors and must return a fully corrected version that runs without errors.
+Output ONLY the corrected Python code — no markdown, no explanations, no code fences.
+</role>
+
+<output_format>
+Output ONLY raw Python code. The first line must be "import streamlit as st" or another import.
+NEVER output markdown fences.
+</output_format>`
+
+function buildPythonRefinementUserMessage(code: string, issues: string[]): string {
+  const issueList = issues.length > 0
+    ? issues.map((i, n) => `${n + 1}. ${i}`).join('\n')
+    : 'None detected by static analysis — do a full review anyway.'
+
+  return `<task>
+Fix ALL runtime errors and API misuse in the following Streamlit Python application.
+The static analyser found these issues:
+${issueList}
+
+Also check and fix EVERY item in this checklist:
+
+<checklist>
+IMPORTS & STRUCTURE:
+1. First line must be "import streamlit as st".
+2. "import pandas as pd" and "import plotly.express as px" must be present if used.
+3. st.set_page_config() must be the VERY FIRST st.* call — before any st.title(), st.sidebar, etc.
+4. No "if __name__ == '__main__':" block needed.
+
+API CALL SIGNATURES (fix any mismatch):
+5. st.metric(label='...', value='...', delta='...') — all keyword arguments.
+6. st.columns(N) returns a list; unpack: col1, col2 = st.columns(2).
+7. st.dataframe(df, use_container_width=True) — pass a DataFrame, not a list.
+8. st.selectbox(label, options=[...]) — options must be a list; first item is the default.
+9. st.plotly_chart(fig, use_container_width=True) — fig must be a plotly Figure object.
+10. st.form_submit_button() must be called INSIDE a st.form() context.
+11. st.session_state — initialise every key with "if 'key' not in st.session_state:" before reading it.
+
+COMPLETENESS:
+12. Every st.button() must have an if-block that does something (st.success, st.toast, st.balloons).
+13. No TODO, placeholder, or incomplete stub code.
+14. Every st.dataframe() must have at least 5 realistic rows.
+15. Every plotly chart must have realistic data from a DataFrame.
+
+PYTHON SYNTAX (the code MUST parse — fix every one of these):
+16. Every dict key must have a matching closing quote: write {'name': 'John'} — NEVER {'name: 'John'} (missing closing quote on the key is a frequent bug; check every dict literal).
+17. Every opening ' or " must have a matching closing quote of the same kind before the next : , } ] or newline.
+18. f-strings (f"..." / f'...') must have balanced braces and balanced quotes.
+19. Triple-quoted strings must be closed with the same triple sequence they opened with.
+20. Parentheses (), brackets [], and braces {} must balance across the whole file.
+21. Do a final pass: mentally run ast.parse() on the file — if it would raise SyntaxError, fix the line.
+
+CURRENT API (replace any removed/deprecated symbol — they raise AttributeError at runtime):
+22. Replace Styler.applymap(...) with .map(...) — applymap was removed from Styler in pandas 2.1+.
+23. Replace DataFrame.applymap(...) with DataFrame.map(...) — deprecated in pandas 2.1+.
+24. Replace df.append(...) with pd.concat([df, other], ignore_index=True) — DataFrame.append was removed in pandas 2.0.
+25. Replace st.experimental_rerun() with st.rerun(); replace st.experimental_*_query_params() with st.query_params.
+
+UNIQUE WIDGET KEYS (Streamlit raises StreamlitDuplicateElementId when two widgets of the same type get the same auto-ID):
+26. EVERY st.button, st.download_button, st.checkbox, st.radio, st.selectbox, st.multiselect, st.slider, st.select_slider, st.text_input, st.text_area, st.number_input, st.date_input, st.time_input, st.file_uploader, st.color_picker, st.toggle and st.form_submit_button MUST have a unique key='...' argument. If the same widget type appears more than once in the file (same label or not), each occurrence needs a distinct key.
+27. Buttons inside loops MUST use a key derived from the loop variable, e.g. st.button('Edit', key=f'edit_{row["id"]}').
+</checklist>
+
+Return the complete corrected Python. Start immediately with the first import line.
+</task>
+
+<code_to_fix>
+${code}
+</code_to_fix>`
+}
+
+// ─── Validation ───────────────────────────────────────────────────────────────
+
+interface PythonValidationResult {
+  isComplete: boolean
+  issues: string[]
+}
+
+function validatePython(code: string): PythonValidationResult {
+  const issues: string[] = []
+
+  if (!code.includes('import streamlit')) {
+    issues.push('Missing Streamlit import (import streamlit as st)')
+  }
+
+  if (!code.includes('st.set_page_config(')) {
+    issues.push('Missing st.set_page_config() call')
+  }
+
+  const lines = code.split('\n')
+  let firstStCall = -1
+  let pageConfigLine = -1
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+    if (pageConfigLine === -1 && trimmed.includes('st.set_page_config(')) {
+      pageConfigLine = i
+    }
+    if (
+      firstStCall === -1 &&
+      /st\.(title|header|subheader|markdown|write|sidebar|columns|tabs|metric|dataframe|button|selectbox)/.test(trimmed) &&
+      !trimmed.includes('st.set_page_config')
+    ) {
+      firstStCall = i
+    }
+  }
+  if (pageConfigLine > -1 && firstStCall > -1 && firstStCall < pageConfigLine) {
+    issues.push('st.set_page_config() must be called BEFORE any other st.* call')
+  }
+
+  if (code.includes('```')) {
+    issues.push('Output contains markdown code fences — must be stripped')
+  }
+
+  if (/\bTODO\b|\bFIXME\b|\bplaceholder\b/i.test(code)) {
+    issues.push('Contains TODO, FIXME, or placeholder text')
+  }
+
+  const forbidden = [
+    'from nicegui', 'import nicegui',
+    'import flask', 'from flask',
+    'import gradio', 'from gradio',
+    'import dash', 'from dash',
+    'import panel', 'from panel',
+  ]
+  for (const f of forbidden) {
+    if (code.toLowerCase().includes(f)) {
+      issues.push(`Forbidden framework import: ${f}`)
+    }
+  }
+
+  const sessionStateReads = code.match(/st\.session_state\.(\w+)/g) || []
+  const sessionStateInits = code.match(/['"]\w+['"]\s+(?:not\s+)?in\s+st\.session_state/g) || []
+  if (sessionStateReads.length > 0 && sessionStateInits.length === 0) {
+    issues.push('st.session_state keys are read without an initialisation guard (if "key" not in st.session_state:)')
+  }
+
+  issues.push(...detectPythonSyntaxIssues(code))
+  issues.push(...detectDeprecatedApis(code))
+  issues.push(...detectDuplicateWidgetKeys(code))
+
+  return { isComplete: issues.length === 0, issues }
+}
+
+// ─── Duplicate widget detection ───────────────────────────────────────────────
+// Streamlit raises StreamlitDuplicateElementId when two widgets of the same
+// type are created with identical parameters and no explicit `key=`. We scan
+// each widget call, hash its first positional arg (label) + presence of key,
+// and flag any (type, label) pair that appears more than once without unique keys.
+const WIDGET_FUNCS = [
+  'button', 'download_button', 'link_button', 'checkbox', 'radio', 'selectbox',
+  'multiselect', 'slider', 'select_slider', 'text_input', 'text_area',
+  'number_input', 'date_input', 'time_input', 'file_uploader', 'color_picker',
+  'toggle', 'form_submit_button', 'camera_input', 'chat_input',
+]
+
+interface WidgetCall {
+  fn: string
+  start: number
+  end: number     // index just after closing ')'
+  argsStart: number
+  argsEnd: number
+  hasKey: boolean
+  label: string
+}
+
+function findWidgetCalls(code: string): WidgetCall[] {
+  const calls: WidgetCall[] = []
+  const re = new RegExp(`(?:st|[A-Za-z_]\\w*)\\.(${WIDGET_FUNCS.join('|')})\\s*\\(`, 'g')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(code))) {
+    const fn = m[1]
+    const argsStart = m.index + m[0].length
+    // Find matching close paren, tracking strings + brackets
+    let depth = 1
+    let i = argsStart
+    let inStr: string | null = null
+    let strTriple = false
+    while (i < code.length && depth > 0) {
+      const c = code[i]
+      if (inStr) {
+        if (c === '\\') { i += 2; continue }
+        if (strTriple && code.slice(i, i + 3) === inStr) { i += 3; inStr = null; strTriple = false; continue }
+        if (!strTriple && c === inStr) { inStr = null; i++; continue }
+        i++; continue
+      }
+      if (c === '#') { while (i < code.length && code[i] !== '\n') i++; continue }
+      if (c === '"' || c === "'") {
+        if (code.slice(i, i + 3) === c.repeat(3)) { inStr = c.repeat(3); strTriple = true; i += 3; continue }
+        inStr = c; i++; continue
+      }
+      if (c === '(' || c === '[' || c === '{') depth++
+      else if (c === ')' || c === ']' || c === '}') depth--
+      i++
+    }
+    const argsEnd = i - 1
+    const args = code.slice(argsStart, argsEnd)
+    const hasKey = /(?:^|[,(\s])key\s*=/.test(args)
+    // Extract first positional arg as label (string literal if possible)
+    const labelMatch = args.match(/^\s*([fr]?['"])([^'"]*)\1/)
+    const label = labelMatch ? labelMatch[2] : args.split(',')[0].trim().slice(0, 40)
+    calls.push({ fn, start: m.index, end: i, argsStart, argsEnd, hasKey, label })
+  }
+  return calls
+}
+
+function detectDuplicateWidgetKeys(code: string): string[] {
+  const calls = findWidgetCalls(code)
+  const groups = new Map<string, WidgetCall[]>()
+  for (const c of calls) {
+    if (c.hasKey) continue
+    const sig = `${c.fn}::${c.label}`
+    if (!groups.has(sig)) groups.set(sig, [])
+    groups.get(sig)!.push(c)
+  }
+  const issues: string[] = []
+  for (const [sig, list] of groups) {
+    if (list.length > 1) {
+      const [fn, label] = sig.split('::')
+      issues.push(
+        `Duplicate st.${fn}(...) with label "${label}" appears ${list.length} times without unique key= — will raise StreamlitDuplicateElementId. Add a unique key='...' to each occurrence.`,
+      )
+    }
+  }
+  // Also flag widgets in loops without key= using f-string/format
+  // (heuristic — caught above when label collides)
+  return issues
+}
+
+// ─── Deprecated / removed API detection ───────────────────────────────────────
+// Catches calls that worked on older pandas/streamlit but raise AttributeError
+// or DeprecationWarning on current releases. The autoFixCommonErrors pass
+// rewrites the easy cases (.applymap → .map); anything left here means the
+// generated code still references a removed symbol and should be refined.
+function detectDeprecatedApis(code: string): string[] {
+  const issues: string[] = []
+
+  if (/\.applymap\s*\(/.test(code)) {
+    issues.push(
+      "Uses removed pandas API '.applymap(...)' — on Styler it was removed in pandas 2.1; on DataFrame it is deprecated. Use '.map(...)' instead.",
+    )
+  }
+  if (/\bdf\.append\s*\(/.test(code) || /\)\.append\s*\(\s*\{/.test(code)) {
+    issues.push(
+      "Uses removed pandas API 'DataFrame.append(...)' (removed in pandas 2.0). Use 'pd.concat([df, other], ignore_index=True)' instead.",
+    )
+  }
+  if (/st\.experimental_rerun\s*\(/.test(code)) {
+    issues.push("Uses removed Streamlit API 'st.experimental_rerun()'. Use 'st.rerun()' instead.")
+  }
+  if (/st\.experimental_(get|set)_query_params\s*\(/.test(code)) {
+    issues.push("Uses removed Streamlit API 'st.experimental_*_query_params()'. Use 'st.query_params' instead.")
+  }
+
+  return issues
+}
+
+// ─── Python syntax validation ─────────────────────────────────────────────────
+// Lightweight static checks that catch the most common LLM-introduced syntax
+// errors (unclosed quotes in dict keys, unbalanced brackets, broken f-strings)
+// without actually running a Python parser.
+
+function detectPythonSyntaxIssues(code: string): string[] {
+  const issues: string[] = []
+  const rawLines = code.split('\n')
+
+  // 1) Unclosed quote in dict keys: { 'name: 'John' } or , "name: "John"
+  //    A well-formed key always closes its quote before the colon. We flag any
+  //    occurrence of `<quote><identifier>:` where the closing quote is missing.
+  const dictKeyBug = /(?:[{,(]|^)\s*(['"])([A-Za-z_]\w*)\s*:(?!=)/gm
+  const dictKeyOffenders = new Set<number>()
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i]
+    // Skip pure comment lines
+    if (/^\s*#/.test(line)) continue
+    dictKeyBug.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = dictKeyBug.exec(line)) !== null) {
+      const quote = m[1]
+      const key = m[2]
+      // A well-formed key would be `'name':` — so the substring `<quote><key><quote>:` would match.
+      const wellFormed = `${quote}${key}${quote}`
+      const colonIdx = m.index + m[0].length - 1
+      const before = line.slice(0, colonIdx).trimEnd()
+      if (!before.endsWith(wellFormed)) {
+        dictKeyOffenders.add(i + 1)
+      }
+    }
+  }
+  if (dictKeyOffenders.size > 0) {
+    const sample = [...dictKeyOffenders].slice(0, 5).join(', ')
+    issues.push(
+      `Unclosed quote in dict key (missing closing ' or " before ":"), e.g. {'name: 'John'} — check line(s): ${sample}`,
+    )
+  }
+
+  // 2) Per-line quote balance (single + double), ignoring escapes and comments.
+  //    Triple quotes span multiple lines, so we track them across the file.
+  let inTripleSingle = false
+  let inTripleDouble = false
+  const quoteOffenders: number[] = []
+  for (let i = 0; i < rawLines.length; i++) {
+    let line = rawLines[i]
+
+    // Strip line comments outside of strings (rough — good enough for QC)
+    if (!inTripleSingle && !inTripleDouble) {
+      const hashIdx = findUnquotedHash(line)
+      if (hashIdx !== -1) line = line.slice(0, hashIdx)
+    }
+
+    // Walk the line and toggle triple-quote state
+    let j = 0
+    let singles = 0
+    let doubles = 0
+    while (j < line.length) {
+      const c = line[j]
+      const next3 = line.slice(j, j + 3)
+      if (!inTripleDouble && next3 === "'''") {
+        inTripleSingle = !inTripleSingle
+        j += 3
+        continue
+      }
+      if (!inTripleSingle && next3 === '"""') {
+        inTripleDouble = !inTripleDouble
+        j += 3
+        continue
+      }
+      if (inTripleSingle || inTripleDouble) {
+        j += 1
+        continue
+      }
+      if (c === '\\') {
+        j += 2
+        continue
+      }
+      if (c === "'") singles += 1
+      else if (c === '"') doubles += 1
+      j += 1
+    }
+    if (!inTripleSingle && !inTripleDouble) {
+      if (singles % 2 !== 0 || doubles % 2 !== 0) {
+        quoteOffenders.push(i + 1)
+      }
+    }
+  }
+  if (quoteOffenders.length > 0) {
+    issues.push(
+      `Unbalanced single/double quotes on line(s): ${quoteOffenders.slice(0, 5).join(', ')}`,
+    )
+  }
+  if (inTripleSingle || inTripleDouble) {
+    issues.push('Unclosed triple-quoted string somewhere in the file')
+  }
+
+  // 3) Global bracket balance (excludes contents inside strings/comments,
+  //    approximated by stripping them line by line).
+  const stripped = stripStringsAndComments(code)
+  const counts = { '(': 0, ')': 0, '[': 0, ']': 0, '{': 0, '}': 0 } as Record<string, number>
+  for (const ch of stripped) {
+    if (ch in counts) counts[ch] += 1
+  }
+  if (counts['('] !== counts[')']) {
+    issues.push(`Unbalanced parentheses: ${counts['(']} '(' vs ${counts[')']} ')'`)
+  }
+  if (counts['['] !== counts[']']) {
+    issues.push(`Unbalanced brackets: ${counts['[']} '[' vs ${counts[']']} ']'`)
+  }
+  if (counts['{'] !== counts['}']) {
+    issues.push(`Unbalanced braces: ${counts['{']} '{' vs ${counts['}']} '}'`)
+  }
+
+  return issues
+}
+
+function findUnquotedHash(line: string): number {
+  let inS = false
+  let inD = false
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (c === '\\') { i += 1; continue }
+    if (!inD && c === "'") inS = !inS
+    else if (!inS && c === '"') inD = !inD
+    else if (!inS && !inD && c === '#') return i
+  }
+  return -1
+}
+
+function stripStringsAndComments(code: string): string {
+  let out = ''
+  let i = 0
+  let inS = false
+  let inD = false
+  let inTS = false
+  let inTD = false
+  while (i < code.length) {
+    const c = code[i]
+    const next3 = code.slice(i, i + 3)
+    if (!inS && !inD && !inTD && next3 === "'''") { inTS = !inTS; i += 3; continue }
+    if (!inS && !inD && !inTS && next3 === '"""') { inTD = !inTD; i += 3; continue }
+    if (inTS || inTD) { i += 1; continue }
+    if (c === '\\') { i += 2; continue }
+    if (!inD && c === "'") { inS = !inS; i += 1; continue }
+    if (!inS && c === '"') { inD = !inD; i += 1; continue }
+    if (inS || inD) { i += 1; continue }
+    if (c === '#') {
+      // skip to end of line
+      while (i < code.length && code[i] !== '\n') i += 1
+      continue
+    }
+    out += c
+    i += 1
+  }
+  return out
+}
+
+// ─── Post-processing ──────────────────────────────────────────────────────────
+
+function stripCodeFences(code: string): string {
+  let out = code.replace(/^```[\w\s]*\n?/i, '')
+  out = out.replace(/\n?```\s*$/i, '')
+  return out.trim()
+}
+
+function stripPreamble(code: string): string {
+  const firstImport = code.search(/^(import streamlit|import pandas|import plotly|#)/m)
+  if (firstImport > 0) {
+    return code.slice(firstImport).trim()
+  }
+  return code
+}
+
+function autoFixCommonErrors(code: string): string {
+  let out = code
+
+  // Remove NiceGUI/other framework imports
+  out = out.replace(/^from nicegui import.*$/gm, '')
+  out = out.replace(/^import nicegui.*$/gm, '')
+
+  // Remove if __name__ == '__main__': blocks (not needed in Streamlit)
+  out = out.replace(/^if __name__\s+(?:==|in)\s+[^:]+:\s*\n([ \t]+.*\n?)*/gm, '')
+
+  // Fix deprecated pandas API:
+  //   Styler.applymap()    → Styler.map()        (removed in pandas 2.1+)
+  //   DataFrame.applymap() → DataFrame.map()     (deprecated in pandas 2.1+)
+  // Both spellings are safely rewritten to `.map(`.
+  out = out.replace(/\.applymap\(/g, '.map(')
+
+  // Fix st.plotly_chart missing use_container_width
+  out = out.replace(
+    /st\.plotly_chart\((\w+)\s*\)/g,
+    'st.plotly_chart($1, use_container_width=True)',
+  )
+
+  // Fix st.dataframe missing use_container_width
+  out = out.replace(
+    /st\.dataframe\((\w+)\s*\)/g,
+    'st.dataframe($1, use_container_width=True)',
+  )
+
+  // Inject unique key='...' into every widget call that lacks one.
+  // Prevents StreamlitDuplicateElementId at runtime.
+  out = injectUniqueWidgetKeys(out)
+
+  return out
+}
+
+function injectUniqueWidgetKeys(code: string): string {
+  const calls = findWidgetCalls(code)
+  if (calls.length === 0) return code
+  // Process from last to first so indices stay valid
+  const counters = new Map<string, number>()
+  let out = code
+  for (let i = calls.length - 1; i >= 0; i--) {
+    const c = calls[i]
+    if (c.hasKey) continue
+    const n = (counters.get(c.fn) ?? 0) + 1
+    counters.set(c.fn, n)
+    // Build a stable unique key
+    const slug = (c.label || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 32) || 'auto'
+    const keyVal = `auto_${c.fn}_${slug}_${c.start}`
+    const argsStr = out.slice(c.argsStart, c.argsEnd)
+    const trimmed = argsStr.replace(/\s*$/, '')
+    const sep = trimmed.length === 0 ? '' : (trimmed.endsWith(',') ? ' ' : ', ')
+    const newArgs = trimmed + sep + `key='${keyVal}'`
+    out = out.slice(0, c.argsStart) + newArgs + out.slice(c.argsEnd)
+  }
+  return out
+}
+
+function amplifyPythonPrompt(prompt: string): string {
+  const trimmed = prompt.trim()
+  const isShort = trimmed.split(/\s+/).length < 15
+
+  const mandatorySections = `
+<mandatory_sections>
+The Streamlit app MUST include ALL of the following, filled with realistic, domain-specific data:
+1. st.set_page_config() as the very first st.* call.
+2. A sidebar with at least one filter (st.selectbox or st.radio) and a title.
+3. At least 4 KPI metric boxes using st.metric() in a st.columns() row.
+4. At least TWO plotly charts (px.bar, px.line, px.pie, or px.scatter) shown with st.plotly_chart().
+5. At least ONE st.dataframe() with 6+ realistic rows and use_container_width=True.
+6. At least one interactive st.button() with a visible result (st.success, st.toast, or st.balloons).
+7. Use st.tabs() to organise content into sections.
+</mandatory_sections>`.trim()
+
+  if (!isShort) {
+    return `${trimmed}\n\n${mandatorySections}`
+  }
+
+  return `${trimmed}
+
+<inference_guidance>
+The request above is intentionally brief. Infer sensible, domain-specific defaults and build a complete, rich Streamlit application. Choose realistic metric names, units, ranges, and data that match the domain.
+</inference_guidance>
+
+${mandatorySections}`
+}
+
+const MAX_RAG_CONTEXT_CHARS = 6000
+
+function truncateContext(context: string, maxChars: number): string {
+  if (context.length <= maxChars) return context
+  const truncated = context.slice(0, maxChars)
+  const lastSectionEnd = truncated.lastIndexOf('\n---\n')
+  const cutAt = lastSectionEnd > maxChars * 0.5 ? lastSectionEnd : truncated.lastIndexOf('\n\n')
+  return (cutAt > 0 ? truncated.slice(0, cutAt) : truncated) + '\n\n# [context truncated]'
+}
+
+// ─── Planning ─────────────────────────────────────────────────────────────────
+
+const PYTHON_PLANNING_SYSTEM_PROMPT = `<role>
+You are an expert Streamlit application architect. Your job is to produce a clear, structured implementation plan for a Streamlit Python application BEFORE any code is written.
+</role>
+
+<output_format>
+Output a concise, structured plan in plain text (no markdown code fences, no Python). Use numbered sections and bullet points. Cover:
+
+1. OVERVIEW — one sentence describing the app's purpose.
+2. PAGE CONFIG — page_title, page_icon, layout setting.
+3. SIDEBAR — navigation/filter widgets and what they control.
+4. KPI METRICS — list each st.metric() with label, sample value, and delta.
+5. CHARTS — for each chart: type (bar/line/pie/scatter), title, x-axis, y-axis, and sample data description.
+6. TABLES — for each dataframe: title, column headers, row count, and what each row represents.
+7. INTERACTIVITY — buttons, forms, and what they trigger.
+8. COLOUR/STYLE — plotly color_continuous_scale or color_discrete_map choices.
+9. DATA — confirm all data is realistic and domain-specific, built from inline Python lists.
+</output_format>
+
+<constraints>
+- Streamlit ONLY.
+- Do not propose any other web framework (Flask, Gradio, Dash, etc.).
+</constraints>`
+
+const PYTHON_PLAN_AMENDMENT_SYSTEM_PROMPT = `<role>
+You are an expert Streamlit application architect acting as a plan editor. You receive an existing structured implementation plan and a user instruction describing what to change. Apply ONLY the requested change and return the complete updated plan.
+</role>
+
+<rules>
+1. Identify which numbered section(s) the instruction refers to.
+2. Modify ONLY the section(s) explicitly mentioned. Leave all others unchanged.
+3. Return the COMPLETE plan — all sections, in order.
+4. No commentary, preamble, or explanation — output the plan text only.
+5. Maintain numbered sections and bullet points format.
+</rules>`
+
+export async function generatePythonPlan(
+  prompt: string,
+  config: LLMConfig,
+  ragEngine: StreamlitRAGEngine | null,
+  callbacks: PythonPlanCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  let context = ''
+  if (ragEngine?.isReady) {
+    try {
+      context = ragEngine.getContext(prompt, 3)
+      context = truncateContext(context, 4000)
+    } catch {
+      // plan without context is still useful
+    }
+  }
+
+  const messages: LLMMessage[] = [
+    { role: 'system', content: PYTHON_PLANNING_SYSTEM_PROMPT },
+  ]
+
+  if (context) {
+    messages.push({
+      role: 'user',
+      content: `<domain_context>\n${context}\n</domain_context>`,
+    })
+    messages.push({
+      role: 'assistant',
+      content: 'Understood. I have the domain context ready.',
+    })
+  }
+
+  messages.push({
+    role: 'user',
+    content: `<request>
+Create a comprehensive implementation plan for the following Streamlit Python application:
+
+${prompt.trim()}
+</request>
+
+Write the plan now. Do not write any Python code — only the structured plan text.`,
+  })
+
+  let fullPlan = ''
+  await generateCompletion(
+    config,
+    messages,
+    {
+      onToken: (token) => {
+        fullPlan += token
+        callbacks.onToken(token)
+      },
+      onComplete: () => {
+        callbacks.onComplete(fullPlan.trim())
+      },
+      onError: callbacks.onError,
+    },
+    signal,
+  )
+}
+
+export async function amendPythonPlan(
+  instruction: string,
+  currentPlan: string,
+  config: LLMConfig,
+  callbacks: PythonPlanCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const messages: LLMMessage[] = [
+    { role: 'system', content: PYTHON_PLAN_AMENDMENT_SYSTEM_PROMPT },
+    {
+      role: 'user',
+      content: `<existing_plan>
+${currentPlan.trim()}
+</existing_plan>
+
+<instruction>
+${instruction.trim()}
+</instruction>
+
+Apply only the requested change. Return the complete updated plan now.`,
+    },
+  ]
+
+  let fullPlan = ''
+  await generateCompletion(
+    config,
+    messages,
+    {
+      onToken: (token) => {
+        fullPlan += token
+        callbacks.onToken(token)
+      },
+      onComplete: () => {
+        callbacks.onComplete(fullPlan.trim())
+      },
+      onError: callbacks.onError,
+    },
+    signal,
+  )
+}
+
+// ─── Main generation function ─────────────────────────────────────────────────
+
+export async function generateStreamlit(
+  prompt: string,
+  config: LLMConfig,
+  ragEngine: StreamlitRAGEngine | null,
+  callbacks: PythonGenerationCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  let context = ''
+  if (ragEngine?.isReady) {
+    try {
+      context = ragEngine.getContext(prompt, 8)
+      context = truncateContext(context, MAX_RAG_CONTEXT_CHARS)
+    } catch (err) {
+      console.warn('[generateStreamlit] RAG lookup failed, generating without context:', err)
+    }
+  }
+
+  const amplifiedPrompt = amplifyPythonPrompt(prompt)
+
+  const messages: LLMMessage[] = [
+    { role: 'system', content: PYTHON_SYSTEM_PROMPT },
+  ]
+
+  if (context) {
+    messages.push({
+      role: 'user',
+      content: `<domain_reference>\n${context}\n</domain_reference>`,
+    })
+    messages.push({
+      role: 'assistant',
+      content: 'Understood. I will use this domain reference to generate realistic, domain-specific data.',
+    })
+  }
+
+  messages.push({
+    role: 'user',
+    content: `<request>
+Create a COMPLETE Streamlit Python application for the following requirements:
+
+${amplifiedPrompt}
+</request>
+
+<reminder>
+- Output ONLY raw Python code. No markdown fences. No explanations.
+- First lines: import streamlit as st / import pandas as pd / import plotly.express as px
+- Call st.set_page_config() FIRST, before any other st.* call.
+- Use st.plotly_chart(fig, use_container_width=True) for all charts.
+- Use st.dataframe(df, use_container_width=True, hide_index=True) for tables.
+- Every st.button() must be inside an if block that does something visible.
+- No "if __name__ == '__main__':" block.
+</reminder>`,
+  })
+
+  let fullResponse = ''
+
+  await generateCompletion(
+    config,
+    messages,
+    {
+      onToken: (token) => {
+        fullResponse += token
+        callbacks.onToken(token)
+      },
+      onComplete: async () => {
+        if (signal?.aborted) return
+
+        try {
+          let finalCode = stripCodeFences(fullResponse.trim())
+          finalCode = stripPreamble(finalCode)
+          finalCode = autoFixCommonErrors(finalCode)
+
+          const validation = validatePython(finalCode)
+
+          if (!validation.isComplete && !signal?.aborted) {
+            callbacks.onRefinementStart?.()
+
+            const refinementMessages: LLMMessage[] = [
+              { role: 'system', content: PYTHON_REFINEMENT_SYSTEM_PROMPT },
+              { role: 'user', content: buildPythonRefinementUserMessage(finalCode, validation.issues) },
+            ]
+
+            let refinedResponse = ''
+            await generateCompletion(
+              config,
+              refinementMessages,
+              {
+                onToken: (token) => {
+                  refinedResponse += token
+                  callbacks.onToken(token)
+                },
+                onComplete: () => {
+                  const refined = autoFixCommonErrors(
+                    stripPreamble(
+                      stripCodeFences(refinedResponse.trim())
+                    )
+                  )
+                  if (refined.length > 200 && refined.includes('import streamlit')) {
+                    finalCode = refined
+                  }
+                },
+                onError: () => {
+                  // Fall through with the auto-fixed original
+                },
+              },
+              signal,
+            )
+          }
+
+          if (signal?.aborted) return
+
+          const code = parsePythonCode(finalCode)
+          callbacks.onComplete(code)
+        } catch (error) {
+          if (signal?.aborted) return
+          callbacks.onError(
+            error instanceof Error ? error : new Error('Failed to parse generated Python code'),
+          )
+        }
+      },
+      onError: callbacks.onError,
+    },
+    signal,
+  )
+}
+
+// ─── Parsing ──────────────────────────────────────────────────────────────────
+
+function parsePythonCode(raw: string): GeneratedPythonCode {
+  const python = raw.trim()
+  const requirements = buildRequirements(python)
+  return { python, requirements }
+}
+
+function buildRequirements(python: string): string {
+  const lines: string[] = ['streamlit>=1.35.0', 'pandas>=2.0.0']
+
+  if (/import plotly|from plotly/.test(python)) lines.push('plotly>=5.0.0')
+  if (/import altair|from altair/.test(python)) lines.push('altair>=5.0.0')
+  if (/import numpy|from numpy/.test(python)) lines.push('numpy>=1.24.0')
+  if (/import requests|from requests/.test(python)) lines.push('requests>=2.31.0')
+  if (/import httpx|from httpx/.test(python)) lines.push('httpx>=0.25.0')
+  if (/import sqlalchemy|from sqlalchemy/.test(python)) lines.push('sqlalchemy>=2.0.0')
+  if (/import pydantic|from pydantic/.test(python)) lines.push('pydantic>=2.0.0')
+  if (/import matplotlib|from matplotlib/.test(python)) lines.push('matplotlib>=3.7.0')
+  if (/import sklearn|from sklearn/.test(python)) lines.push('scikit-learn>=1.3.0')
+
+  return lines.join('\n')
+}

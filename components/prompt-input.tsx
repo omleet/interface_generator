@@ -3,12 +3,13 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { Sparkles, Loader2, Square, Search, X, ChevronRight, Zap, BarChart2, Thermometer, Wifi, Server, Factory, Wind, Droplets, Gauge, Activity, Shield, Cpu, ClipboardList, RefreshCw, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react'
+import { Sparkles, Loader2, Square, Search, X, ChevronRight, Zap, BarChart2, Thermometer, Wifi, Server, Factory, Wind, Droplets, Gauge, Activity, Shield, Cpu, ClipboardList, RefreshCw, CheckCircle2, ChevronDown, ChevronUp, MessageSquarePlus, CornerDownLeft } from 'lucide-react'
 
 interface PromptInputProps {
   onSubmit: (prompt: string) => void
   onPlan?: (prompt: string) => void
   onReplan?: (prompt: string, currentPlan: string) => void
+  onAmendPlan?: (instruction: string, currentPlan: string) => void
   onCancel?: () => void
   isLoading: boolean
   isPlanLoading?: boolean
@@ -272,6 +273,7 @@ export function PromptInput({
   onSubmit,
   onPlan,
   onReplan,
+  onAmendPlan,
   onCancel,
   isLoading,
   isPlanLoading = false,
@@ -285,6 +287,8 @@ export function PromptInput({
   const [isExamplesOpen, setIsExamplesOpen] = useState(false)
   const [focusedIndex, setFocusedIndex] = useState(-1)
   const [isPlanExpanded, setIsPlanExpanded] = useState(true)
+  const [amendInstruction, setAmendInstruction] = useState('')
+  const amendInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const planTextareaRef = useRef<HTMLTextAreaElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -356,6 +360,20 @@ export function PromptInput({
   const handleReplan = () => {
     if (prompt.trim() && !isLoading && !isPlanLoading && !disabled && onReplan) {
       onReplan(prompt.trim(), plan)
+    }
+  }
+
+  const handleAmendPlan = () => {
+    if (amendInstruction.trim() && plan.trim() && !isLoading && !isPlanLoading && !disabled && onAmendPlan) {
+      onAmendPlan(amendInstruction.trim(), plan)
+      setAmendInstruction('')
+    }
+  }
+
+  const handleAmendKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleAmendPlan()
     }
   }
 
@@ -507,20 +525,51 @@ export function PromptInput({
                 spellCheck={false}
               />
               {planState === 'ready' && !isPlanLoading && plan && (
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] text-muted-foreground">
-                    Edit the plan above, then click Generate to produce the page based on it.
-                  </p>
-                  <Button
-                    size="sm"
-                    onClick={handleSubmit}
-                    disabled={!prompt.trim() || disabled || isLoading}
-                    className="h-7 text-xs px-3"
-                  >
-                    <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-                    Generate from plan
-                  </Button>
-                </div>
+                <>
+                  {/* ── Conversational amendment bar ── */}
+                  {onAmendPlan && (
+                    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 focus-within:border-primary/50 focus-within:bg-muted/50 transition-colors">
+                      <MessageSquarePlus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <input
+                        ref={amendInputRef}
+                        type="text"
+                        value={amendInstruction}
+                        onChange={(e) => setAmendInstruction(e.target.value)}
+                        onKeyDown={handleAmendKeyDown}
+                        placeholder='Ask the LLM to change the plan, e.g. "Change point 3 to use a pie chart"'
+                        className="flex-1 text-xs bg-transparent outline-none placeholder:text-muted-foreground/50 text-foreground"
+                        disabled={isPlanLoading || isLoading || disabled}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAmendPlan}
+                        disabled={!amendInstruction.trim() || isPlanLoading || isLoading || disabled}
+                        title="Apply change to plan (Enter)"
+                        className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <CornerDownLeft className="h-3 w-3" />
+                        Apply
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] text-muted-foreground">
+                      Edit the plan above or ask the LLM to amend it, then click Generate.
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={handleSubmit}
+                      disabled={!prompt.trim() || disabled || isLoading}
+                      className="h-7 text-xs px-3"
+                    >
+                      <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                      Generate from plan
+                    </Button>
+                  </div>
+                </>
               )}
             </div>
           )}

@@ -157,6 +157,8 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
   const [isPreview, setIsPreview] = useState(false)
+  const [leftPanelOpen, setLeftPanelOpen] = useState(false)
+  const [rightPanelOpen, setRightPanelOpen] = useState(false)
 
   // AI panel
   const [aiOpen, setAiOpen] = useState(true)
@@ -521,13 +523,33 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
     <div className="grapesjs-shell fixed inset-0 z-50 flex flex-col bg-[#fafafa] text-gray-900" style={{ colorScheme: 'light' }}>
       {/* ── Top toolbar ──────────────────────────────────────────────────── */}
       <header className="flex items-center justify-between border-b border-gray-200 bg-white text-gray-900 px-4 py-2 shrink-0">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={onClose}>
-            <X className="h-4 w-4 mr-1" />
-            Close
+            <X className="h-4 w-4" />
+            <span className="hidden sm:inline ml-1">Close</span>
           </Button>
           <Separator orientation="vertical" className="h-6" />
-          <div className="flex items-center gap-1">
+          {/* Panel toggles — only visible below lg (desktop) */}
+          <div className="flex items-center gap-1 lg:hidden">
+            <Button
+              variant={leftPanelOpen ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => { setLeftPanelOpen(p => !p); setRightPanelOpen(false); }}
+              title="Toggle Blocks/Layers panel"
+            >
+              <Blocks className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={rightPanelOpen ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => { setRightPanelOpen(p => !p); setLeftPanelOpen(false); }}
+              title="Toggle Styles/Settings panel"
+            >
+              <Palette className="h-4 w-4" />
+            </Button>
+            <Separator orientation="vertical" className="h-6" />
+          </div>
+          <div className="hidden sm:flex items-center gap-1">
             <h2 className="text-sm font-semibold">Visual Editor</h2>
             {isReady ? (
               <Badge variant="outline" className="text-[10px] h-5">
@@ -600,8 +622,8 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
             onClick={() => setIsPreview((p) => !p)}
             title="Toggle preview"
           >
-            {isPreview ? <Edit className="h-4 w-4 mr-1" /> : <Eye className="h-4 w-4 mr-1" />}
-            {isPreview ? 'Edit' : 'Preview'}
+            {isPreview ? <Edit className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            <span className="hidden lg:inline ml-1">{isPreview ? 'Edit' : 'Preview'}</span>
           </Button>
 
           <Button
@@ -610,9 +632,10 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
             onClick={handleOpenInNewTab}
             disabled={!isReady}
             title="Open full preview in a new tab"
+            className="hidden sm:flex"
           >
-            <ExternalLink className="h-4 w-4 mr-1" />
-            Open in new tab
+            <ExternalLink className="h-4 w-4" />
+            <span className="hidden xl:inline ml-1">Open in new tab</span>
           </Button>
 
           <Button
@@ -621,8 +644,8 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
             onClick={() => setAiOpen((v) => !v)}
             title="Toggle AI assistant"
           >
-            <Sparkles className="h-4 w-4 mr-1" />
-            AI Assistant
+            <Sparkles className="h-4 w-4" />
+            <span className="hidden lg:inline ml-1">AI Assistant</span>
           </Button>
 
           {hasSelection && (
@@ -633,8 +656,8 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
               title="Clear selection"
                className="bg-red-50 text-red-600 transition-colors hover:bg-red-100"
             >
-              <XCircle className="h-4 w-4 mr-1 " />
-              Clear selection
+              <XCircle className="h-4 w-4" />
+              <span className="hidden sm:inline ml-1">Clear selection</span>
             </Button>
           )}
         </div>
@@ -648,9 +671,16 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
       </header>
 
       {/* ── Main: 3-column layout ───────────────────────────────────────── */}
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-1 min-h-0 relative overflow-hidden">
+        {/* Backdrop — closes panels on tap (mobile/tablet only) */}
+        {(leftPanelOpen || rightPanelOpen) && (
+          <div
+            className="absolute inset-0 z-30 bg-black/30 lg:hidden"
+            onClick={() => { setLeftPanelOpen(false); setRightPanelOpen(false); }}
+          />
+        )}
         {/* Left sidebar: Blocks / Layers */}
-        <aside className="w-64 border-r border-gray-200 bg-white text-gray-900 flex flex-col shrink-0">
+        <aside className={`w-64 border-r border-gray-200 bg-white text-gray-900 flex flex-col shrink-0 transition-transform duration-200 ease-in-out absolute top-0 bottom-0 left-0 z-40 lg:static lg:inset-auto lg:z-auto ${leftPanelOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
           <Tabs
             value={leftPanel}
             onValueChange={(v) => setLeftPanel(v as LeftPanel)}
@@ -721,7 +751,7 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
         </main>
 
         {/* Right sidebar: Styles / Traits */}
-        <aside className="w-72 border-l border-gray-200 bg-white text-gray-900 flex flex-col shrink-0">
+        <aside className={`w-72 border-l border-gray-200 bg-white text-gray-900 flex flex-col shrink-0 transition-transform duration-200 ease-in-out absolute top-0 bottom-0 right-0 z-40 lg:static lg:inset-auto lg:z-auto ${rightPanelOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}`}>
           <Tabs
             value={rightPanel}
             onValueChange={(v) => setRightPanel(v as RightPanel)}
@@ -816,8 +846,8 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
             <div className="flex items-center gap-2">
               {hasSelection && (
                 <Button variant="ghost" size="sm" onClick={handleClearSelection} className="bg-red-50 text-red-600 transition-colors hover:bg-red-100">
-                  Clear selection
-                  
+                  <XCircle className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline ml-1">Clear selection</span>
                 </Button>
               )}
               <Button variant="ghost" size="sm" onClick={() => setAiOpen(false)}>

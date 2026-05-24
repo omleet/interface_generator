@@ -474,6 +474,64 @@ export interface PlanCallbacks {
   onError: (error: Error) => void
 }
 
+// ─── Plan amendment system prompt ────────────────────────────────────────────
+
+const PLAN_AMENDMENT_SYSTEM_PROMPT = `<role>
+You are an expert AdminLTE 3 dashboard architect acting as a plan editor. You receive an existing structured implementation plan and a user instruction describing what to change. Your job is to apply ONLY the requested change and return the complete updated plan — with every unaffected section preserved exactly as-is.
+</role>
+
+<rules>
+1. Interpret the user instruction carefully: identify which numbered section(s) it refers to (by number or by name).
+2. Modify ONLY the section(s) explicitly mentioned. Leave all other sections completely unchanged.
+3. Return the COMPLETE plan — all sections, in order — not just the modified part.
+4. Do NOT add commentary, preamble, or explanation. Output the plan text only.
+5. Maintain the same format as the original plan: numbered sections, bullet points, plain text — no markdown code fences.
+6. If the instruction is ambiguous, apply the most reasonable interpretation and note it in parentheses at the end of the modified section only.
+7. Constraints: AdminLTE 3 + Bootstrap 4 ONLY. No DataTables, Select2, SweetAlert, ApexCharts, Highcharts — Chart.js only.
+</rules>`
+
+export async function amendPlan(
+  instruction: string,
+  currentPlan: string,
+  config: LLMConfig,
+  callbacks: PlanCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const messages: LLMMessage[] = [
+    { role: 'system', content: PLAN_AMENDMENT_SYSTEM_PROMPT },
+    {
+      role: 'user',
+      content: `<existing_plan>
+${currentPlan.trim()}
+</existing_plan>
+
+<instruction>
+${instruction.trim()}
+</instruction>
+
+Apply only the requested change. Return the complete updated plan now.`,
+    },
+  ]
+
+  let fullPlan = ''
+
+  await generateCompletion(
+    config,
+    messages,
+    {
+      onToken: (token) => {
+        fullPlan += token
+        callbacks.onToken(token)
+      },
+      onComplete: () => {
+        callbacks.onComplete(fullPlan.trim())
+      },
+      onError: callbacks.onError,
+    },
+    signal,
+  )
+}
+
 export async function generatePlan(
   prompt: string,
   config: LLMConfig,
