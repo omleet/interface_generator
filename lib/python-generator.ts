@@ -180,6 +180,7 @@ CURRENT API RULES (avoid removed/deprecated symbols — they raise AttributeErro
 - Styling cells: use df.style.map(fn, subset=[...]) — NEVER Styler.applymap(...) (removed in pandas 2.1+).
 - Element-wise on DataFrame: use df.map(fn) — NEVER df.applymap(fn) (deprecated in pandas 2.1+).
 - Appending rows: use pd.concat([df, other], ignore_index=True) — NEVER df.append(...) (removed in pandas 2.0).
+- Pandas frequency strings: use the NEW aliases — 'h' (hour), 'min' (minute), 's' (second), 'ms' (millisecond), 'us' (microsecond), 'ns' (nanosecond), 'YE' (year-end), 'ME' (month-end), 'QE' (quarter-end), 'W' (week). NEVER use the DEPRECATED aliases 'H', 'T', 'S', 'MS' (as minute), 'A', 'BM', 'CBM', 'SM' — they raise FutureWarning in pandas 2.2 and will be removed. Applies to pd.date_range(freq=), df.resample(rule=), pd.Grouper(freq=), and any other pandas frequency argument.
 - Rerun: use st.rerun() — NEVER st.experimental_rerun().
 - Query params: use st.query_params — NEVER st.experimental_get_query_params() / st.experimental_set_query_params().
 
@@ -192,11 +193,18 @@ PLOTLY EXPRESS COLOR PARAMETERS (critical — wrong combination raises TypeError
   NEVER use color_continuous_scale= with a string/category column.
 - color= with a NUMERIC column → use color_continuous_scale='Blues' (or any named scale)
   NEVER use color_discrete_sequence= or color_discrete_map= with a numeric column.
+- NEVER pass a palette name (e.g. 'Set2', 'Viridis', 'Plotly') as a plain string to color_discrete_sequence= — it must be a list of hex/CSS colours or a px.colors.* list (e.g. px.colors.qualitative.Set2). Passing a string raises TypeError or silently maps each character as a colour.
 - These chart types ALWAYS use categorical color: px.bar, px.line, px.area, px.box, px.violin, px.pie, px.histogram.
 - These chart types ALWAYS use continuous color when color= is numeric: px.scatter, px.density_heatmap, px.treemap.
 - Examples:
     px.bar(df, x='Month', y='Revenue', color='Status', color_discrete_map={'Active':'#2ecc71','Inactive':'#e74c3c'})
     px.scatter(df, x='x', y='y', color='score', color_continuous_scale='Viridis')
+
+PLOTLY COLUMN EXISTENCE (critical — raises ValueError at runtime):
+- Before every px.* call, ALL column names passed to x=, y=, color=, size=, hover_data=, facet_col=, facet_row=, animation_frame=, text= MUST exist as actual keys in the DataFrame being passed.
+- Define the DataFrame first; then reference only its real column names in the px.* call.
+- A mis-spelled or invented column name will raise: ValueError: Value of 'x' is not the name of a column in 'data_frame'.
+- If a column is needed but missing, add it to the DataFrame definition — do NOT invent a column name in the chart call.
 
 GLOBAL KEYWORD (critical — SyntaxWarning in Python 3.12+, error at runtime):
 - NEVER use the \`global\` keyword inside an if/for/while/try block at module level. \`global\` is ONLY valid inside a \`def\` function body.
@@ -354,13 +362,27 @@ CURRENT API (replace any removed/deprecated symbol — they raise AttributeError
 25. Replace st.experimental_rerun() with st.rerun(); replace st.experimental_*_query_params() with st.query_params.
 
 UNIQUE WIDGET KEYS (Streamlit raises StreamlitDuplicateElementId when two widgets of the same type get the same auto-ID):
-25a. PLOTLY COLOR PARAMETER MISMATCH (raises TypeError at runtime):
+25a. PLOTLY COLUMN EXISTENCE (raises ValueError at runtime):
+    - Before every px.* call, verify that ALL column names passed to x=, y=, color=, size=, hover_data=, facet_col=, facet_row=, animation_frame=, text=, and any other column-referencing argument actually exist in the DataFrame.
+    - Check against df.columns immediately before the chart call.
+    - If a column name was invented or mis-spelled, either correct it to the real column name that exists in the DataFrame, or remove the argument.
+    - Never reference a column that is not present in the DataFrame passed to the chart; Plotly will raise ValueError: Value of 'x' is not the name of a column.
+    - Pattern to follow: define the DataFrame first, then reference only its actual column names in the px.* call.
+
+25b. PLOTLY COLOR PARAMETER MISMATCH (raises TypeError at runtime):
     - If color='SomeColumn' where the column contains strings/categories: use color_discrete_sequence= or color_discrete_map=. NEVER color_continuous_scale=.
     - If color='SomeColumn' where the column contains numbers: use color_continuous_scale=. NEVER color_discrete_sequence= or color_discrete_map=.
     - px.bar, px.line, px.area, px.box, px.violin, px.pie always need color_discrete_* when color= is used.
     - Fix by inspecting the DataFrame column values near the px.* call and choosing the correct parameter.
+    - NEVER pass a palette name as a plain string to color_discrete_sequence= — it must be a list. Wrong: color_discrete_sequence='Set2'. Right: color_discrete_sequence=px.colors.qualitative.Set2 or color_discrete_sequence=['#e74c3c', '#2ecc71'].
 
-25b. NEVER use \`global\` outside a def body. If the generated code has \`global x\` inside an if/for/while block, remove the statement (at module level all names are already global) or move the mutable value into st.session_state.
+25c. NEVER use \`global\` outside a def body. If the generated code has \`global x\` inside an if/for/while block, remove the statement (at module level all names are already global) or move the mutable value into st.session_state.
+
+25d. PANDAS FREQUENCY ALIASES (raises FutureWarning / ValueError in pandas 2.2+):
+    - NEVER use the deprecated aliases: 'H' (hour), 'T' (minute), 'S' (second), 'A' (year-end), 'BM', 'CBM', 'SM'.
+    - ALWAYS use the current aliases: 'h' (hour), 'min' (minute), 's' (second), 'ms' (millisecond), 'YE' (year-end), 'ME' (month-end), 'QE' (quarter-end).
+    - Applies everywhere a frequency string is passed: pd.date_range(freq=), df.resample(rule=), pd.Grouper(freq=), pd.period_range(freq=), etc.
+    - Quick mapping: 'H'→'h', 'T'→'min', 'S'→'s', 'A'→'YE', 'M'→'ME', 'Q'→'QE'.
 
 26. EVERY st.button, st.download_button, st.checkbox, st.radio, st.selectbox, st.multiselect, st.slider, st.select_slider, st.text_input, st.text_area, st.number_input, st.date_input, st.time_input, st.file_uploader, st.color_picker, st.toggle and st.form_submit_button MUST have a unique key='...' argument. If the same widget type appears more than once in the file (same label or not), each occurrence needs a distinct key.
 27. Buttons inside loops MUST use a key derived from the loop variable, e.g. st.button('Edit', key=f'edit_{row["id"]}').
@@ -1172,6 +1194,41 @@ function autoFixCommonErrors(code: string): string {
   //   DataFrame.applymap() → DataFrame.map()     (deprecated in pandas 2.1+)
   // Both spellings are safely rewritten to `.map(`.
   out = out.replace(/\.applymap\(/g, '.map(')
+
+  // Fix deprecated pandas frequency aliases (pandas 2.2+ raises FutureWarning/ValueError).
+  // Only replace when the alias appears as a complete quoted string value, e.g. freq='H'
+  // or rule="T", to avoid touching unrelated strings that happen to contain these letters.
+  out = out.replace(/(?<=freq\s*=\s*['"])H(?=['"])/g, 'h')
+  out = out.replace(/(?<=freq\s*=\s*['"])T(?=['"])/g, 'min')
+  out = out.replace(/(?<=freq\s*=\s*['"])S(?=['"])/g, 's')
+  out = out.replace(/(?<=freq\s*=\s*['"])A(?=['"])/g, 'YE')
+  out = out.replace(/(?<=freq\s*=\s*['"])M(?=['"])/g, 'ME')
+  out = out.replace(/(?<=freq\s*=\s*['"])Q(?=['"])/g, 'QE')
+  out = out.replace(/(?<=rule\s*=\s*['"])H(?=['"])/g, 'h')
+  out = out.replace(/(?<=rule\s*=\s*['"])T(?=['"])/g, 'min')
+  out = out.replace(/(?<=rule\s*=\s*['"])S(?=['"])/g, 's')
+  out = out.replace(/(?<=rule\s*=\s*['"])A(?=['"])/g, 'YE')
+  out = out.replace(/(?<=rule\s*=\s*['"])M(?=['"])/g, 'ME')
+  out = out.replace(/(?<=rule\s*=\s*['"])Q(?=['"])/g, 'QE')
+
+  // Fix color_discrete_sequence='SomePaletteName' (string instead of list).
+  // Converts the bare string to the corresponding px.colors.qualitative list, or a
+  // safe default, so Plotly doesn't iterate over individual characters as colours.
+  out = out.replace(
+    /\bcolor_discrete_sequence\s*=\s*['"](\w+)['"]/g,
+    (match, name) => {
+      const knownQualitative = new Set([
+        'Plotly','D3','G10','T10','Alphabet','Dark24','Light24',
+        'Set1','Set2','Set3','Pastel1','Pastel2','Paired',
+        'Antique','Bold','Pastel','Prism','Safe','Vivid',
+      ])
+      if (knownQualitative.has(name)) {
+        return `color_discrete_sequence=px.colors.qualitative.${name}`
+      }
+      // Unknown string — replace with a safe default list
+      return `color_discrete_sequence=px.colors.qualitative.Set2`
+    },
+  )
 
   // Fix st.plotly_chart missing use_container_width
   out = out.replace(
