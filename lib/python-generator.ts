@@ -1,6 +1,8 @@
 import type { LLMConfig, LLMMessage } from './llm-client'
 import { generateCompletion } from './llm-client'
 import type { StreamlitRAGEngine } from './streamlit-rag-engine'
+import type { ExamplesRAGEngine } from './streamlit-examples-rag-engine'
+import { getComponentContext, detectRequiredComponents } from './streamlit-components-knowledge'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -185,6 +187,23 @@ UNIQUE WIDGET KEYS (critical — duplicates raise StreamlitDuplicateElementId at
 - EVERY interactive widget (st.button, st.download_button, st.checkbox, st.radio, st.selectbox, st.multiselect, st.slider, st.select_slider, st.text_input, st.text_area, st.number_input, st.date_input, st.time_input, st.file_uploader, st.color_picker, st.toggle, st.form_submit_button) MUST receive a unique key='...' argument when the same widget type might appear more than once (e.g. multiple buttons with the same label, buttons inside loops, repeated controls across tabs/columns).
 - When in doubt, ALWAYS pass a unique key. Example: st.button('▶️ Power ON', key='power_on_machine_a'), st.button('▶️ Power ON', key='power_on_machine_b').
 
+PLOTLY EXPRESS COLOR PARAMETERS (critical — wrong combination raises TypeError at runtime):
+- color= with a CATEGORICAL/TEXT column → use color_discrete_sequence=['#hex',...] or color_discrete_map={'val':'#hex',...}
+  NEVER use color_continuous_scale= with a string/category column.
+- color= with a NUMERIC column → use color_continuous_scale='Blues' (or any named scale)
+  NEVER use color_discrete_sequence= or color_discrete_map= with a numeric column.
+- These chart types ALWAYS use categorical color: px.bar, px.line, px.area, px.box, px.violin, px.pie, px.histogram.
+- These chart types ALWAYS use continuous color when color= is numeric: px.scatter, px.density_heatmap, px.treemap.
+- Examples:
+    px.bar(df, x='Month', y='Revenue', color='Status', color_discrete_map={'Active':'#2ecc71','Inactive':'#e74c3c'})
+    px.scatter(df, x='x', y='y', color='score', color_continuous_scale='Viridis')
+
+GLOBAL KEYWORD (critical — SyntaxWarning in Python 3.12+, error at runtime):
+- NEVER use the \`global\` keyword inside an if/for/while/try block at module level. \`global\` is ONLY valid inside a \`def\` function body.
+- At module level, all names are already global — the keyword is unnecessary and raises SyntaxWarning.
+- Correct: use st.session_state for mutable state that must persist across reruns.
+- If you need a module-level counter, initialise with \`if 'x' not in st.session_state: st.session_state.x = 0\` and read/write via st.session_state.x.
+
 ALWAYS:
 - Provide 6-10 rows of realistic sample data in every st.dataframe()
 - Give every plotly chart a realistic, domain-specific dataset
@@ -264,20 +283,38 @@ Output ONLY the corrected Python code — no markdown, no explanations, no code 
 </role>
 
 <output_format>
-Output ONLY raw Python code. The first line must be "import streamlit as st" or another import.
-NEVER output markdown fences.
-</output_format>`
+Output ONLY raw Python code. The first line must be an import statement (e.g. import streamlit as st).
+NEVER output markdown fences (triple backticks). NEVER add explanations before or after the code.
+</output_format>
 
-function buildPythonRefinementUserMessage(code: string, issues: string[]): string {
+<critical_rules>
+- Return the COMPLETE file — never truncate or summarise sections.
+- Do NOT change logic, data, or layout that is not broken. Only fix the reported issues.
+- If a third-party component is used (st_folium, AgGrid, st_echarts, option_menu, etc.) keep its exact API — do not replace it with a core Streamlit widget.
+- Every widget that appears more than once must have a unique key= argument.
+- st.set_page_config() must be the VERY FIRST st.* call in the file.
+- All dict keys must be properly quoted: {'name': 'John'} not {'name: 'John'}.
+- Parentheses, brackets, and braces must balance across the whole file.
+</critical_rules>`
+
+function buildPythonRefinementUserMessage(
+  code: string,
+  issues: string[],
+  componentsContext?: string,
+): string {
   const issueList = issues.length > 0
     ? issues.map((i, n) => `${n + 1}. ${i}`).join('\n')
     : 'None detected by static analysis — do a full review anyway.'
+
+  const componentSection = componentsContext
+    ? `\n<third_party_component_apis>\n${componentsContext}\n</third_party_component_apis>\n`
+    : ''
 
   return `<task>
 Fix ALL runtime errors and API misuse in the following Streamlit Python application.
 The static analyser found these issues:
 ${issueList}
-
+${componentSection}
 Also check and fix EVERY item in this checklist:
 
 <checklist>
@@ -317,6 +354,14 @@ CURRENT API (replace any removed/deprecated symbol — they raise AttributeError
 25. Replace st.experimental_rerun() with st.rerun(); replace st.experimental_*_query_params() with st.query_params.
 
 UNIQUE WIDGET KEYS (Streamlit raises StreamlitDuplicateElementId when two widgets of the same type get the same auto-ID):
+25a. PLOTLY COLOR PARAMETER MISMATCH (raises TypeError at runtime):
+    - If color='SomeColumn' where the column contains strings/categories: use color_discrete_sequence= or color_discrete_map=. NEVER color_continuous_scale=.
+    - If color='SomeColumn' where the column contains numbers: use color_continuous_scale=. NEVER color_discrete_sequence= or color_discrete_map=.
+    - px.bar, px.line, px.area, px.box, px.violin, px.pie always need color_discrete_* when color= is used.
+    - Fix by inspecting the DataFrame column values near the px.* call and choosing the correct parameter.
+
+25b. NEVER use \`global\` outside a def body. If the generated code has \`global x\` inside an if/for/while block, remove the statement (at module level all names are already global) or move the mutable value into st.session_state.
+
 26. EVERY st.button, st.download_button, st.checkbox, st.radio, st.selectbox, st.multiselect, st.slider, st.select_slider, st.text_input, st.text_area, st.number_input, st.date_input, st.time_input, st.file_uploader, st.color_picker, st.toggle and st.form_submit_button MUST have a unique key='...' argument. If the same widget type appears more than once in the file (same label or not), each occurrence needs a distinct key.
 27. Buttons inside loops MUST use a key derived from the loop variable, e.g. st.button('Edit', key=f'edit_{row["id"]}').
 </checklist>
@@ -397,8 +442,163 @@ function validatePython(code: string): PythonValidationResult {
   issues.push(...detectPythonSyntaxIssues(code))
   issues.push(...detectDeprecatedApis(code))
   issues.push(...detectDuplicateWidgetKeys(code))
+  issues.push(...detectGlobalOutsideDef(code))
+  issues.push(...detectPlotlyColorMismatch(code))
+  issues.push(...detectThirdPartyApiMisuse(code))
+  issues.push(...detectRuntimePatternIssues(code))
 
   return { isComplete: issues.length === 0, issues }
+}
+
+
+// ─── Plotly color mismatch detection ─────────────────────────────────────────
+// Catches the common LLM mistake of using color_continuous_scale= with a
+// categorical column, or color_discrete_sequence= with a numeric column.
+// These both cause TypeError at runtime in plotly.express.
+function detectPlotlyColorMismatch(code: string): string[] {
+  const issues: string[] = []
+  const calls = findPxCalls(code)
+
+  for (const { fn, argsStart, argsEnd } of calls) {
+    const args = code.slice(argsStart, argsEnd)
+    const colorM = /\bcolor\s*=\s*(['"])(\w[\w\s]*?)\1/.exec(args)
+    if (!colorM) continue
+
+    const colName = colorM[2]
+    const hasCont = /\bcolor_continuous_scale\s*=/.test(args)
+    const hasDiscSeq = /\bcolor_discrete_sequence\s*=/.test(args)
+    const hasDiscMap = /\bcolor_discrete_map\s*=/.test(args)
+
+    if (!hasCont && !hasDiscSeq && !hasDiscMap) continue
+
+    const colType = inferColumnType(colName, code)
+    const isDiscreteFn = DISCRETE_ONLY_PX_FUNCS.has(fn)
+
+    if ((colType === 'categorical' || (colType === 'unknown' && isDiscreteFn)) && hasCont) {
+      issues.push(
+        `px.${fn}() uses color='${colName}' (categorical/text) with color_continuous_scale= — ` +
+        `this raises TypeError. Use color_discrete_sequence= or color_discrete_map= instead.`,
+      )
+    }
+    if (colType === 'numeric' && (hasDiscSeq || hasDiscMap) && !hasCont) {
+      issues.push(
+        `px.${fn}() uses color='${colName}' (numeric) with color_discrete_sequence=/color_discrete_map= — ` +
+        `use color_continuous_scale='Blues' (or another named scale) instead.`,
+      )
+    }
+  }
+
+  return issues
+}
+
+// ─── global-outside-def detection ────────────────────────────────────────────
+// Detects `global` statements at module level (inside if/for/while/try blocks
+// but NOT inside def bodies). These raise SyntaxWarning in Python 3.12+ and
+// are semantically meaningless — module-level names are already global.
+function detectGlobalOutsideDef(code: string): string[] {
+  const issues: string[] = []
+  const lines = code.split('\n')
+  const badLines: number[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const stripped = line.trim()
+    if (!stripped.startsWith('global ')) continue
+
+    const indent = line.length - line.trimStart().length
+    let inDef = false
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = lines[j]
+      const prevStripped = prev.trim()
+      if (!prevStripped) continue
+      const prevIndent = prev.length - prev.trimStart().length
+      if (prevIndent < indent) {
+        inDef = /^def\s+\w+/.test(prevStripped)
+        break
+      }
+    }
+
+    if (!inDef) badLines.push(i + 1)
+  }
+
+  if (badLines.length > 0) {
+    issues.push(
+      `'global' keyword used outside a def block on line(s): ${badLines.slice(0, 5).join(', ')}. ` +
+      `'global' is only valid inside function bodies — at module level all names are already global. Remove the statement.`,
+    )
+  }
+
+  return issues
+}
+
+
+// Catches common LLM mistakes when generating code that uses third-party
+// community components whose APIs are not in the official llms.txt.
+function detectThirdPartyApiMisuse(code: string): string[] {
+  const issues: string[] = []
+  if (code.includes('st_folium') && !code.includes('folium.Map')) {
+    issues.push('Uses st_folium() but no folium.Map() is created. st_folium() requires a folium.Map instance as its first argument.')
+  }
+  if (code.includes('AgGrid(') && !/(pd\.DataFrame|read_csv|read_excel|read_json)/.test(code)) {
+    issues.push('Uses AgGrid() but no DataFrame is visible. AgGrid() requires a pandas DataFrame as its first argument.')
+  }
+  if (code.includes('st_echarts(') && !code.includes("'series'") && !code.includes('"series"')) {
+    issues.push("Uses st_echarts() but the options dict has no 'series' key. ECharts options must include a 'series' array.")
+  }
+  if (code.includes('option_menu(') && !code.includes('options=')) {
+    issues.push("Uses option_menu() without an 'options=' argument. option_menu() requires options=['...'] as a keyword argument.")
+  }
+  if (code.includes('agraph(') && (!code.includes('nodes=') || !code.includes('edges='))) {
+    issues.push('Uses agraph() without nodes= or edges=. agraph() requires both nodes=[Node(...)] and edges=[Edge(...)] keyword arguments.')
+  }
+  if (code.includes('st.pydeck_chart(') && !code.includes('pdk.Deck(')) {
+    issues.push('Uses st.pydeck_chart() but no pdk.Deck() is created. st.pydeck_chart() requires a pdk.Deck instance.')
+  }
+  return issues
+}
+
+// ─── Runtime pattern issues ────────────────────────────────────────────
+// Catches patterns that pass syntax checks but fail at runtime.
+function detectRuntimePatternIssues(code: string): string[] {
+  const issues: string[] = []
+
+  // st.form_submit_button outside a st.form context manager
+  if (code.includes('st.form_submit_button(') && !code.includes('st.form(')) {
+    issues.push('st.form_submit_button() is used without a st.form() context manager. Wrap the form content in "with st.form(key=\'...\'): ..."')
+  }
+
+  // Unguarded st.rerun() that can cause infinite loops
+  if (
+    (code.match(/st\.rerun\(\)/g) || []).length > 2 &&
+    !code.includes('if ') &&
+    !code.includes('elif ')
+  ) {
+    issues.push('Multiple st.rerun() calls without conditional guards — may cause an infinite rerun loop. Wrap each st.rerun() in an if/elif condition.')
+  }
+
+  // DataFrame column reference mismatch for inline constructors
+  const dfConstructors = [...code.matchAll(/pd\.DataFrame\(\{([^}]{1,400})\}/g)]
+  for (const m of dfConstructors) {
+    const keys = [...m[1].matchAll(/['"]([A-Za-z_]\w*)['"]\s*:/g)].map((k) => k[1])
+    if (keys.length === 0) continue
+    const nearby = code.slice(m.index!, m.index! + 600)
+    const refs = [...nearby.matchAll(/(?:groupby|sort_values|pivot|pivot_table)\(['"]([A-Za-z_]\w*)['"]\)/g)].map((r) => r[1])
+    for (const ref of refs) {
+      if (!keys.includes(ref)) {
+        issues.push(`DataFrame column '${ref}' referenced but not in the DataFrame constructor. Available: ${keys.join(', ')}.`)
+      }
+    }
+  }
+
+  // st.download_button inside a loop without f-string key
+  if (
+    /for\s+\w+\s+in\s+[\w.()]+:\s*[\s\S]{0,200}st\.download_button/.test(code) &&
+    !/st\.download_button\([^)]*key\s*=\s*f['"]/.test(code)
+  ) {
+    issues.push("st.download_button() inside a loop must use an f-string key= derived from the loop variable, e.g. key=f'download_{i}'.")
+  }
+
+  return issues
 }
 
 // ─── Duplicate widget detection ───────────────────────────────────────────────
@@ -481,8 +681,25 @@ function detectDuplicateWidgetKeys(code: string): string[] {
       )
     }
   }
-  // Also flag widgets in loops without key= using f-string/format
-  // (heuristic — caught above when label collides)
+
+  // Also detect duplicate EXPLICIT key= string values — e.g. key='save_btn'
+  // appearing in two different tabs/columns. These are not caught above because
+  // hasKey=true skips them, but Streamlit still raises StreamlitDuplicateElementKey.
+  const explicitKeyCounts = new Map<string, number>()
+  const keyPattern = /\bkey\s*=\s*(['"])([^'"]+)\1/g
+  let km: RegExpExecArray | null
+  while ((km = keyPattern.exec(code)) !== null) {
+    const val = km[2]
+    explicitKeyCounts.set(val, (explicitKeyCounts.get(val) ?? 0) + 1)
+  }
+  for (const [keyVal, count] of explicitKeyCounts) {
+    if (count > 1) {
+      issues.push(
+        `Explicit key='${keyVal}' appears ${count} times — will raise StreamlitDuplicateElementKey. Each widget key must be globally unique; rename duplicate occurrences (e.g. '${keyVal}_2', '${keyVal}_3').`,
+      )
+    }
+  }
+
   return issues
 }
 
@@ -688,8 +905,260 @@ function stripPreamble(code: string): string {
   return code
 }
 
+// ─── Fix: global keyword outside def ─────────────────────────────────────────
+// Python only allows `global` inside function bodies (def blocks). When the LLM
+// emits `global x` inside an if/for/while block at module level it produces a
+// SyntaxWarning on Python 3.12+ that can become a hard error. At module level
+// every name is already global, so the statement is unnecessary and can be safely
+// removed. We keep the line as a comment so the intent is visible.
+function fixGlobalOutsideDef(code: string): string {
+  const lines = code.split('\n')
+  const result: string[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const stripped = line.trim()
+
+    if (!stripped.startsWith('global ')) {
+      result.push(line)
+      continue
+    }
+
+    const indent = line.length - line.trimStart().length
+
+    // Walk backwards to find the nearest enclosing block at lower indent.
+    // If that block is a `def`, the global statement is valid — keep it.
+    let inDef = false
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = lines[j]
+      const prevStripped = prev.trim()
+      if (!prevStripped) continue                  // skip blank lines
+      const prevIndent = prev.length - prev.trimStart().length
+      if (prevIndent < indent) {
+        inDef = /^def\s+\w+/.test(prevStripped)
+        break
+      }
+    }
+
+    if (inDef) {
+      result.push(line)                            // valid inside def — keep
+    } else {
+      // Module-level global is invalid/redundant — comment it out
+      result.push(line.replace(stripped, `# (removed invalid global) ${stripped}`))
+    }
+  }
+
+  return result.join('\n')
+}
+
+// ─── Fix: duplicate explicit widget keys ─────────────────────────────────────
+// The LLM sometimes emits key='save_btn' in two separate tabs or columns.
+// Streamlit raises StreamlitDuplicateElementKey when the same key string
+// appears more than once. We rename duplicate occurrences by appending _2, _3…
+function fixDuplicateExplicitKeys(code: string): string {
+  const seen = new Map<string, number>()
+  return code.replace(
+    /(\bkey\s*=\s*)(['"])([^'"]+)\2/g,
+    (_match, prefix, quote, keyVal) => {
+      const count = (seen.get(keyVal) ?? 0) + 1
+      seen.set(keyVal, count)
+      if (count > 1) {
+        return `${prefix}${quote}${keyVal}_${count}${quote}`
+      }
+      return `${prefix}${quote}${keyVal}${quote}`
+    },
+  )
+}
+
+
+// ─── Fix: missing Python imports ─────────────────────────────────────────────
+// Scans the generated code for known usage patterns (pd., px., np., etc.) and
+// injects the corresponding import line when it is missing. Runs first in the
+// post-processing pipeline so downstream checks have correct imports.
+const IMPORT_RULES: Array<[RegExp, string]> = [
+  [/\bst\./, 'import streamlit as st'],
+  [/\bpd\./, 'import pandas as pd'],
+  [/\bpx\./, 'import plotly.express as px'],
+  [/\bgo\./, 'import plotly.graph_objects as go'],
+  [/\bnp\./, 'import numpy as np'],
+  [/\balt\./, 'import altair as alt'],
+  [/\bplt\./, 'import matplotlib.pyplot as plt'],
+  [/(?<!\.)random\./, 'import random'],
+  [/\bjson\./, 'import json'],
+  [/\bdatetime\./, 'import datetime'],
+  [/(?<!\.)time\.(?:sleep|time|strftime)\b/, 'import time'],
+  [/\bmath\./, 'import math'],
+  [/\bos\.(?:path|environ|listdir|getcwd)\b/, 'import os'],
+  [/\bcalendar\./, 'import calendar'],
+  [/\bcsv\./, 'import csv'],
+  [/\bio\.(?:BytesIO|StringIO)\b/, 'import io'],
+  [/\bbase64\./, 'import base64'],
+  [/\bcollections\.(?:Counter|defaultdict|OrderedDict)\b/, 'import collections'],
+  [/\bitertools\./, 'import itertools'],
+  [/\bfunctools\./, 'import functools'],
+  [/\bPath\s*\(/, 'from pathlib import Path'],
+  [/(?<!\w)re\.(?:search|match|findall|sub|compile)\b/, 'import re'],
+]
+
+function ensureRequiredImports(code: string): string {
+  const lines = code.split('\n')
+
+  const existingImports = new Set<string>()
+  for (const line of lines) {
+    const s = line.trim()
+    if (s.startsWith('import ') || s.startsWith('from ')) existingImports.add(s)
+  }
+
+  // Use non-import code for pattern matching to avoid matching import lines themselves
+  const nonImportCode = lines
+    .filter((l) => { const s = l.trim(); return !s.startsWith('import ') && !s.startsWith('from ') })
+    .join('\n')
+
+  const missing: string[] = []
+  for (const [pattern, importLine] of IMPORT_RULES) {
+    if (existingImports.has(importLine)) continue
+    if (!pattern.test(nonImportCode)) continue
+    const moduleName = importLine.split(/\s+/)[1].split('.')[0]
+    const alreadyPresent = [...existingImports].some((imp) => imp.includes(moduleName))
+    if (!alreadyPresent) missing.push(importLine)
+  }
+
+  if (missing.length === 0) return code
+
+  let lastImportIdx = -1
+  for (let i = 0; i < lines.length; i++) {
+    const s = lines[i].trim()
+    if (s.startsWith('import ') || s.startsWith('from ')) lastImportIdx = i
+  }
+
+  const insertAt = lastImportIdx >= 0 ? lastImportIdx + 1 : 0
+  lines.splice(insertAt, 0, ...missing)
+  return lines.join('\n')
+}
+
+// ─── Fix: Plotly Express color parameter compatibility ────────────────────────
+// TypeError: px.bar() got unexpected keyword argument 'color_continuous_scale'
+// occurs when color= points to a categorical (string) column.
+// color_continuous_scale → only valid for NUMERIC color columns.
+// color_discrete_sequence / color_discrete_map → only valid for CATEGORICAL columns.
+
+const DISCRETE_ONLY_PX_FUNCS = new Set([
+  'bar', 'line', 'area', 'box', 'violin', 'strip', 'histogram',
+  'pie', 'funnel', 'timeline', 'ecdf',
+])
+
+function findPxCalls(code: string): Array<{ fn: string; argsStart: number; argsEnd: number }> {
+  const calls: Array<{ fn: string; argsStart: number; argsEnd: number }> = []
+  const re = /\bpx\.(\w+)\s*\(/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(code)) !== null) {
+    const fn = m[1]
+    const argsStart = m.index + m[0].length
+    let depth = 1
+    let i = argsStart
+    let inStr: string | null = null
+    while (i < code.length && depth > 0) {
+      const c = code[i]
+      if (inStr) {
+        if (c === '\\') { i += 2; continue }
+        if (code.slice(i, i + inStr.length) === inStr) { i += inStr.length; inStr = null; continue }
+        i++; continue
+      }
+      if (c === '"' || c === "'") {
+        const triple = code.slice(i, i + 3)
+        inStr = (triple === '"""' || triple === "'''") ? triple : c
+        i += inStr.length; continue
+      }
+      if (c === '(') depth++
+      else if (c === ')') depth--
+      i++
+    }
+    calls.push({ fn, argsStart, argsEnd: i - 1 })
+  }
+  return calls
+}
+
+function inferColumnType(colName: string, code: string): 'categorical' | 'numeric' | 'unknown' {
+  const escaped = colName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const pat = new RegExp(`['"]${escaped}['"]\\s*:\\s*\\[([^\\]]+)\\]`)
+  const m = pat.exec(code)
+  if (!m) return 'unknown'
+  const values = m[1].trim()
+  if (/['"][^'"]+['"]/.test(values)) return 'categorical'
+  if (/\b\d+\.?\d*\b/.test(values) && !/['"]/.test(values)) return 'numeric'
+  return 'unknown'
+}
+
+function fixColorParams(
+  args: string,
+  fn: string,
+  colType: 'categorical' | 'numeric' | 'unknown',
+): string {
+  const hasCont = /\bcolor_continuous_scale\s*=/.test(args)
+  const hasDiscSeq = /\bcolor_discrete_sequence\s*=/.test(args)
+  const hasDiscMap = /\bcolor_discrete_map\s*=/.test(args)
+
+  if (!hasCont && !hasDiscSeq && !hasDiscMap) return args
+
+  const treatAsDiscrete =
+    colType === 'categorical' ||
+    (colType === 'unknown' && DISCRETE_ONLY_PX_FUNCS.has(fn))
+  const treatAsContinuous = colType === 'numeric'
+
+  if (treatAsDiscrete && hasCont) {
+    if (!hasDiscSeq && !hasDiscMap) {
+      args = args.replace(
+        /\bcolor_continuous_scale\s*=\s*(['"][\w_]+['"]|\w+)/,
+        "color_discrete_sequence=px.colors.qualitative.Set2",
+      )
+    } else {
+      args = args.replace(/,?\s*\bcolor_continuous_scale\s*=\s*(['"][\w_]+['"]|\w+)/, '')
+    }
+  } else if (treatAsContinuous && hasDiscSeq && !hasCont) {
+    args = args.replace(
+      /\bcolor_discrete_sequence\s*=\s*(\[[^\]]+\]|\w+)/,
+      "color_continuous_scale='Blues'",
+    )
+  } else if (treatAsContinuous && hasDiscMap && !hasCont) {
+    args = args.replace(
+      /\bcolor_discrete_map\s*=\s*(\{[^}]+\}|\w+)/,
+      "color_continuous_scale='Blues'",
+    )
+  } else if (!treatAsDiscrete && !treatAsContinuous && hasCont && hasDiscSeq) {
+    args = args.replace(/,?\s*\bcolor_continuous_scale\s*=\s*(['"][\w_]+['"]|\w+)/, '')
+  }
+
+  return args
+}
+
+function fixPlotlyColorArgs(code: string): string {
+  const calls = findPxCalls(code)
+  if (calls.length === 0) return code
+
+  let result = code
+  for (let ci = calls.length - 1; ci >= 0; ci--) {
+    const { fn, argsStart, argsEnd } = calls[ci]
+    const argsText = result.slice(argsStart, argsEnd)
+    const colorM = /\bcolor\s*=\s*(['"])([\w\s]+)\1/.exec(argsText)
+    if (!colorM) continue
+    const colName = colorM[2]
+    const colType = inferColumnType(colName, result)
+    const fixedArgs = fixColorParams(argsText, fn, colType)
+    if (fixedArgs !== argsText) {
+      result = result.slice(0, argsStart) + fixedArgs + result.slice(argsEnd)
+    }
+  }
+
+  return result
+}
+
+
 function autoFixCommonErrors(code: string): string {
   let out = code
+
+  // 1. Inject any missing standard imports (pd., np., px., etc.) first so that
+  //    downstream checks operate on syntactically complete import blocks.
+  out = ensureRequiredImports(out)
 
   // Remove NiceGUI/other framework imports
   out = out.replace(/^from nicegui import.*$/gm, '')
@@ -716,9 +1185,20 @@ function autoFixCommonErrors(code: string): string {
     'st.dataframe($1, use_container_width=True)',
   )
 
+  // 2. Fix Plotly Express color= / color_*_scale mismatches before refinement.
+  out = fixPlotlyColorArgs(out)
+
+  // Remove `global` statements outside def bodies — invalid at module level
+  // in Python 3.12+ and never needed (module-level names are already global).
+  out = fixGlobalOutsideDef(out)
+
   // Inject unique key='...' into every widget call that lacks one.
   // Prevents StreamlitDuplicateElementId at runtime.
   out = injectUniqueWidgetKeys(out)
+
+  // Rename duplicate explicit key= values (same string in multiple widgets).
+  // Must run AFTER injectUniqueWidgetKeys so auto-injected keys are also covered.
+  out = fixDuplicateExplicitKeys(out)
 
   return out
 }
@@ -828,6 +1308,7 @@ export async function generatePythonPlan(
   ragEngine: StreamlitRAGEngine | null,
   callbacks: PythonPlanCallbacks,
   signal?: AbortSignal,
+  examplesEngine?: ExamplesRAGEngine | null,
 ): Promise<void> {
   let context = ''
   if (ragEngine?.isReady) {
@@ -839,18 +1320,35 @@ export async function generatePythonPlan(
     }
   }
 
+  let examplesContext = ''
+  if (examplesEngine?.isReady) {
+    try {
+      examplesContext = examplesEngine.getContext(prompt, 1)
+      examplesContext = truncateContext(examplesContext, 3000)
+    } catch {
+      // non-fatal
+    }
+  }
+
   const messages: LLMMessage[] = [
     { role: 'system', content: PYTHON_PLANNING_SYSTEM_PROMPT },
   ]
 
-  if (context) {
+  const combinedContext = [
+    context && `<api_reference>\n${context}\n</api_reference>`,
+    examplesContext && `<working_examples>\n${examplesContext}\n</working_examples>`,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+
+  if (combinedContext) {
     messages.push({
       role: 'user',
-      content: `<domain_context>\n${context}\n</domain_context>`,
+      content: `<domain_context>\n${combinedContext}\n</domain_context>`,
     })
     messages.push({
       role: 'assistant',
-      content: 'Understood. I have the domain context ready.',
+      content: 'Understood. I have the API reference and working examples ready.',
     })
   }
 
@@ -932,6 +1430,7 @@ export async function generateStreamlit(
   ragEngine: StreamlitRAGEngine | null,
   callbacks: PythonGenerationCallbacks,
   signal?: AbortSignal,
+  examplesEngine?: ExamplesRAGEngine | null,
 ): Promise<void> {
   let context = ''
   if (ragEngine?.isReady) {
@@ -943,12 +1442,24 @@ export async function generateStreamlit(
     }
   }
 
+  // Fetch few-shot structural examples (top-2 most relevant working apps)
+  let examplesContext = ''
+  if (examplesEngine?.isReady) {
+    try {
+      examplesContext = examplesEngine.getContext(prompt, 2)
+      examplesContext = truncateContext(examplesContext, 5000)
+    } catch (err) {
+      console.warn('[generateStreamlit] Examples RAG lookup failed:', err)
+    }
+  }
+
   const amplifiedPrompt = amplifyPythonPrompt(prompt)
 
   const messages: LLMMessage[] = [
     { role: 'system', content: PYTHON_SYSTEM_PROMPT },
   ]
 
+  // Inject API reference first (what exists), then working examples (how to use it)
   if (context) {
     messages.push({
       role: 'user',
@@ -956,7 +1467,31 @@ export async function generateStreamlit(
     })
     messages.push({
       role: 'assistant',
-      content: 'Understood. I will use this domain reference to generate realistic, domain-specific data.',
+      content: 'Understood. I have the API reference ready.',
+    })
+  }
+
+  if (examplesContext) {
+    messages.push({
+      role: 'user',
+      content: `<working_examples>\n${examplesContext}\n</working_examples>`,
+    })
+    messages.push({
+      role: 'assistant',
+      content: 'Understood. I have working reference apps to guide the structure and patterns.',
+    })
+  }
+
+  // Inject third-party component docs if the prompt implies non-core functionality
+  const componentsContext = getComponentContext(prompt, 3)
+  if (componentsContext) {
+    messages.push({
+      role: 'user',
+      content: `<third_party_components>\n${componentsContext}\n</third_party_components>`,
+    })
+    messages.push({
+      role: 'assistant',
+      content: 'Understood. I have the third-party component APIs and working examples available.',
     })
   }
 
@@ -1002,41 +1537,115 @@ ${amplifiedPrompt}
           if (!validation.isComplete && !signal?.aborted) {
             callbacks.onRefinementStart?.()
 
-            const refinementMessages: LLMMessage[] = [
+            // Fetch component docs relevant to the original prompt so the
+            // refinement LLM knows the correct third-party APIs
+            const refineComponentsCtx = getComponentContext(prompt, 2)
+
+            // ── Pass 1 ──────────────────────────────────────────────────
+            const pass1Messages: LLMMessage[] = [
               { role: 'system', content: PYTHON_REFINEMENT_SYSTEM_PROMPT },
-              { role: 'user', content: buildPythonRefinementUserMessage(finalCode, validation.issues) },
+              {
+                role: 'user',
+                content: buildPythonRefinementUserMessage(
+                  finalCode,
+                  validation.issues,
+                  refineComponentsCtx || undefined,
+                ),
+              },
             ]
 
-            let refinedResponse = ''
+            let pass1Response = ''
             await generateCompletion(
               config,
-              refinementMessages,
+              pass1Messages,
               {
                 onToken: (token) => {
-                  refinedResponse += token
+                  pass1Response += token
                   callbacks.onToken(token)
                 },
                 onComplete: () => {
-                  const refined = autoFixCommonErrors(
-                    stripPreamble(
-                      stripCodeFences(refinedResponse.trim())
-                    )
+                  const candidate = autoFixCommonErrors(
+                    stripPreamble(stripCodeFences(pass1Response.trim()))
                   )
-                  if (refined.length > 200 && refined.includes('import streamlit')) {
-                    finalCode = refined
+                  if (candidate.length > 200 && candidate.includes('import streamlit')) {
+                    finalCode = candidate
                   }
                 },
-                onError: () => {
-                  // Fall through with the auto-fixed original
-                },
+                onError: () => { /* fall through with auto-fixed original */ },
               },
               signal,
             )
+
+            // ── Validate pass-1 result; run pass 2 only if still broken ──
+            if (!signal?.aborted) {
+              const pass1Validation = validatePython(finalCode)
+              const remainingIssues = pass1Validation.issues.filter(
+                (iss) => !validation.issues.includes(iss)
+                  ? true                            // new issue introduced
+                  : !pass1Validation.isComplete,    // old issue not fixed
+              )
+
+              // Log refinement outcome for debugging (visible in browser console)
+              console.debug(
+                '[refinement] pass-1 result:',
+                pass1Validation.isComplete ? 'CLEAN' : `${pass1Validation.issues.length} issue(s) remain`,
+                pass1Validation.issues,
+              )
+
+              if (!pass1Validation.isComplete && !signal?.aborted) {
+                // ── Pass 2 — focused on remaining issues only ─────────
+                const pass2Messages: LLMMessage[] = [
+                  { role: 'system', content: PYTHON_REFINEMENT_SYSTEM_PROMPT },
+                  {
+                    role: 'user',
+                    content: buildPythonRefinementUserMessage(
+                      finalCode,
+                      pass1Validation.issues,
+                      refineComponentsCtx || undefined,
+                    ),
+                  },
+                ]
+
+                let pass2Response = ''
+                await generateCompletion(
+                  config,
+                  pass2Messages,
+                  {
+                    onToken: (token) => {
+                      pass2Response += token
+                      callbacks.onToken(token)
+                    },
+                    onComplete: () => {
+                      const candidate2 = autoFixCommonErrors(
+                        stripPreamble(stripCodeFences(pass2Response.trim()))
+                      )
+                      if (candidate2.length > 200 && candidate2.includes('import streamlit')) {
+                        finalCode = candidate2
+                      }
+                    },
+                    onError: () => { /* fall through with pass-1 result */ },
+                  },
+                  signal,
+                )
+
+                console.debug(
+                  '[refinement] pass-2 result:',
+                  validatePython(finalCode).isComplete ? 'CLEAN' : 'still has issues',
+                )
+              }
+            }
           }
 
           if (signal?.aborted) return
 
           const code = parsePythonCode(finalCode)
+          // Auto-detect third-party components used and merge into requirements
+          const extraReqs = detectRequiredComponents(finalCode)
+          if (extraReqs.length > 0) {
+            const existingReqs = code.requirements.split('\n').map((l: string) => l.trim()).filter(Boolean)
+            const merged = [...new Set([...existingReqs, ...extraReqs])]
+            code.requirements = merged.join('\n')
+          }
           callbacks.onComplete(code)
         } catch (error) {
           if (signal?.aborted) return

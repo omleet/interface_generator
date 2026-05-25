@@ -264,8 +264,6 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
       style: code.css,
     })
 
-    
-
     editorRef.current = editor
 
     // ── Register generic traits so the Settings panel is never empty ───

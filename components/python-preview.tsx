@@ -41,7 +41,7 @@ export function PythonPreview({ code, className }: PythonPreviewProps) {
   const uiCalls = (code.python.match(/\bui\.\w+\s*\(/g) ?? []).length
 
   return (
-    <div className={`flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 rounded-lg p-8 gap-6 ${className ?? ''}`}>
+    <div className={`flex flex-col items-center justify-center bg-linear-to-br from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 rounded-lg p-8 gap-6 ${className ?? ''}`}>
       {/* Icon + title */}
       <div className="flex flex-col items-center gap-3 text-center">
         <div className="rounded-full bg-blue-100 dark:bg-blue-900/40 p-4">

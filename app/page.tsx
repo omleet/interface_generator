@@ -25,6 +25,10 @@ import {
   type StreamlitRAGProgress,
 } from '@/lib/streamlit-rag-engine'
 import {
+  createExamplesRAGEngine,
+  type ExamplesRAGEngine,
+} from '@/lib/streamlit-examples-rag-engine'
+import {
   generateDashboard,
   generatePlan,
   amendPlan,
@@ -66,6 +70,9 @@ export default function DashboardGenerator() {
     progress: 0,
     message: 'Not started',
   })
+
+  // ─── Streamlit Examples RAG Engine (few-shot boilerplate) ─────────────────────
+  const [examplesEngine, setExamplesEngine] = useState<ExamplesRAGEngine | null>(null)
 
   // ─── Generation State (shared between HTML and Python modes) ──────────────
   const [generationState, setGenerationState] = useState<GenerationState>('idle')
@@ -132,6 +139,21 @@ export default function DashboardGenerator() {
     initStreamlitRAG()
   }, [])
 
+  // ─── Initialize Streamlit Examples RAG Engine ────────────────────────────────
+  useEffect(() => {
+    const initExamples = async () => {
+      try {
+        const engine = await createExamplesRAGEngine()
+        await engine.index()
+        setExamplesEngine(engine)
+      } catch {
+        // Non-fatal: generator still works without few-shot examples
+        console.warn('Failed to load Streamlit examples RAG engine')
+      }
+    }
+    initExamples()
+  }, [])
+
   // ─── Reset output when mode changes ──────────────────────────────────────
   const handleModeChange = useCallback((mode: OutputMode) => {
     // Cancel any in-flight generation
@@ -185,7 +207,7 @@ export default function DashboardGenerator() {
 
     try {
       if (outputMode === 'python') {
-        await generatePythonPlan(prompt, llmConfig, streamlitRagEngine, planCallbacks, controller.signal)
+        await generatePythonPlan(prompt, llmConfig, streamlitRagEngine, planCallbacks, controller.signal, examplesEngine)
       } else {
         await generatePlan(prompt, llmConfig, ragEngine!, planCallbacks, controller.signal)
       }
@@ -200,7 +222,7 @@ export default function DashboardGenerator() {
         abortControllerRef.current = null
       }
     }
-  }, [ragEngine, streamlitRagEngine, llmConfig, outputMode])
+  }, [ragEngine, streamlitRagEngine, examplesEngine, llmConfig, outputMode])
 
   const handleReplan = useCallback(async (prompt: string, currentPlan: string) => {
     if (!ragEngine) return
@@ -248,7 +270,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
 
     try {
       if (outputMode === 'python') {
-        await generatePythonPlan(replanPrompt, llmConfig, streamlitRagEngine, replanCallbacks, controller.signal)
+        await generatePythonPlan(replanPrompt, llmConfig, streamlitRagEngine, replanCallbacks, controller.signal, examplesEngine)
       } else {
         await generatePlan(replanPrompt, llmConfig, ragEngine!, replanCallbacks, controller.signal)
       }
@@ -263,7 +285,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
         abortControllerRef.current = null
       }
     }
-  }, [ragEngine, streamlitRagEngine, llmConfig, outputMode])
+  }, [ragEngine, streamlitRagEngine, examplesEngine, llmConfig, outputMode])
 
   // ─── Plan amendment ───────────────────────────────────────────────────────
   const handleAmendPlan = useCallback(async (instruction: string, currentPlan: string) => {
@@ -315,7 +337,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
         abortControllerRef.current = null
       }
     }
-  }, [ragEngine, streamlitRagEngine, llmConfig, outputMode])
+  }, [ragEngine, streamlitRagEngine, examplesEngine, llmConfig, outputMode])
   // ─── Main generation ──────────────────────────────────────────────────────
   const handleSubmit = useCallback(async (prompt: string) => {
     if (!ragEngine) {
@@ -379,6 +401,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
             },
           },
           controller.signal,
+          examplesEngine,
         )
       } else {
         await generateDashboard(
@@ -419,7 +442,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
         abortControllerRef.current = null
       }
     }
-  }, [ragEngine, streamlitRagEngine, llmConfig, plan, outputMode])
+  }, [ragEngine, streamlitRagEngine, examplesEngine, llmConfig, plan, outputMode])
 
   // ─── Cancel ───────────────────────────────────────────────────────────────
   const handleCancel = useCallback(() => {
@@ -532,7 +555,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
             />
 
           {/* Code Viewer — responsive height so it scrolls instead of stretching the page */}
-          <Card className="overflow-hidden h-[300px] md:h-[400px] lg:h-[480px]">
+          <Card className="overflow-hidden h-75 md:h-100 lg:h-120">
             <CardContent className="p-0 h-full flex flex-col">
               {outputMode === 'python' ? (
                 <PythonCodeViewer
@@ -556,7 +579,7 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
           </div>
 
           {/* Right Panel - Preview */}
-          <Card className="overflow-hidden h-[440px] md:h-[560px] lg:h-[700px]">
+          <Card className="overflow-hidden h-110 md:h-140 lg:h-175">
             <CardHeader className="pb-3 border-b">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg flex items-center gap-2">
