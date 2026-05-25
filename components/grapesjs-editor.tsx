@@ -264,6 +264,8 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
       style: code.css,
     })
 
+    
+
     editorRef.current = editor
 
     // ── Register generic traits so the Settings panel is never empty ───
@@ -675,7 +677,7 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
         {/* Backdrop — closes panels on tap (mobile/tablet only) */}
         {(leftPanelOpen || rightPanelOpen) && (
           <div
-            className="absolute inset-0 z-30 bg-black/30 lg:hidden"
+            className="absolute inset-0 z-30 lg:hidden pointer-events-none"
             onClick={() => { setLeftPanelOpen(false); setRightPanelOpen(false); }}
           />
         )}
