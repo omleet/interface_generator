@@ -80,6 +80,8 @@ export default function DashboardGenerator() {
   const [streamingContent, setStreamingContent] = useState<string>('')
   const [currentPrompt, setCurrentPrompt] = useState<string>('')
   const [generationTimeMs, setGenerationTimeMs] = useState<number | undefined>(undefined)
+  const [validationIssues, setValidationIssues] = useState<string[]>([])
+  const [validationPass, setValidationPass] = useState<number>(1)
   const [generationStartTime, setGenerationStartTime] = useState<number | null>(null)
 
   // ─── HTML-mode state ──────────────────────────────────────────────────────
@@ -387,6 +389,11 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
               if (controller.signal.aborted) return
               setGenerationState('refining')
             },
+            onValidationIssues: (issues, pass) => {
+              if (controller.signal.aborted) return
+              setValidationIssues(issues)
+              setValidationPass(pass)
+            },
             onComplete: (code) => {
               if (controller.signal.aborted) return
               const endTime = Date.now()
@@ -552,6 +559,8 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
               state={generationState}
               error={generationError}
               generationTimeMs={generationTimeMs}
+              validationIssues={validationIssues}
+              validationPass={validationPass}
             />
 
           {/* Code Viewer — responsive height so it scrolls instead of stretching the page */}

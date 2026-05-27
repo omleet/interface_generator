@@ -12,11 +12,10 @@ interface PythonPreviewProps {
 export function PythonPreview({ code, className }: PythonPreviewProps) {
   const [copied, setCopied] = useState(false)
 
-  const installCmd = 'pip install streamlit pandas plotly'
-  const runCmd = 'streamlit run app.py'
-
   const handleCopyCmd = async () => {
-    await navigator.clipboard.writeText(`${installCmd} && ${runCmd}`)
+    const reqs = code?.requirements ?? 'streamlit pandas plotly'
+    const pkgs = reqs.split('\n').map(l => l.split('>=')[0].trim()).filter(Boolean).join(' ')
+    await navigator.clipboard.writeText(`pip install ${pkgs} && streamlit run app.py`)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -29,16 +28,27 @@ export function PythonPreview({ code, className }: PythonPreviewProps) {
     )
   }
 
-  // Extract the app title from ui.run(title='...') if present
-  const titleMatch = code.python.match(/ui\.run\s*\([^)]*title\s*=\s*['"]([^'"]+)['"]/i)
+  // ── FIX: Extract title from st.set_page_config (was using NiceGUI ui.run regex) ──
+  const titleMatch = code.python.match(/set_page_config\s*\([^)]*page_title\s*=\s*['"]([^'"]+)['"]/i)
   const appTitle = titleMatch?.[1] ?? 'Streamlit App'
 
-  // Extract port
-  const portMatch = code.python.match(/ui\.run\s*\([^)]*port\s*=\s*(\d+)/i)
-  const port = portMatch?.[1] ?? '8501'
+  // ── FIX: Count st.* calls (was counting ui.* calls) ──
+  const stCalls = (code.python.match(/\bst\.\w+\s*\(/g) ?? []).length
 
-  // Rough count of UI elements
-  const uiCalls = (code.python.match(/\bui\.\w+\s*\(/g) ?? []).length
+  // ── Count plotly charts ──
+  const chartCount = (code.python.match(/st\.plotly_chart\s*\(/g) ?? []).length
+
+  // ── Count dataframes ──
+  const dfCount = (code.python.match(/st\.dataframe\s*\(/g) ?? []).length
+
+  // Build install command from actual requirements
+  const pkgs = code.requirements
+    .split('\n')
+    .map(l => l.split('>=')[0].trim())
+    .filter(Boolean)
+    .join(' ')
+  const installCmd = `pip install ${pkgs}`
+  const runCmd = 'streamlit run app.py'
 
   return (
     <div className={`flex flex-col items-center justify-center bg-linear-to-br from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 rounded-lg p-8 gap-6 ${className ?? ''}`}>
@@ -57,15 +67,19 @@ export function PythonPreview({ code, className }: PythonPreviewProps) {
       <div className="flex gap-6 text-center">
         <div>
           <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{code.python.split('\n').length}</p>
-          <p className="text-xs text-muted-foreground">lines of code</p>
+          <p className="text-xs text-muted-foreground">lines</p>
         </div>
         <div>
-          <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{uiCalls}</p>
-          <p className="text-xs text-muted-foreground">UI elements</p>
+          <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stCalls}</p>
+          <p className="text-xs text-muted-foreground">st.* widgets</p>
         </div>
         <div>
-          <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{port}</p>
-          <p className="text-xs text-muted-foreground">port</p>
+          <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{chartCount}</p>
+          <p className="text-xs text-muted-foreground">charts</p>
+        </div>
+        <div>
+          <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{dfCount}</p>
+          <p className="text-xs text-muted-foreground">dataframes</p>
         </div>
       </div>
 
@@ -76,9 +90,11 @@ export function PythonPreview({ code, className }: PythonPreviewProps) {
           <span>How to run</span>
         </div>
         <div className="space-y-2">
-          <div className="rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">
+          <div className="rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground break-all">
             {installCmd}
+            
           </div>
+           
           <div className="rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">
             {runCmd}
           </div>
@@ -103,9 +119,9 @@ export function PythonPreview({ code, className }: PythonPreviewProps) {
       </div>
 
       <p className="text-xs text-muted-foreground text-center max-w-sm">
-        Python apps cannot run in the browser. Download the code and run it locally.
-        The app will open at{' '}
-        <span className="font-mono">http://localhost:{port}</span>.
+        Python Apps doesn't run in the browser. Download the code and run it locally.
+        The App opens at{' '}
+        <span className="font-mono">http://localhost:8501</span>.
       </p>
     </div>
   )

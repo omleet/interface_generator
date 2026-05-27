@@ -1,18 +1,18 @@
 // ---------------------------------------------------------------------------
-// Streamlit Examples RAG Engine
+// Streamlit Dashboard Examples RAG Engine
 // ---------------------------------------------------------------------------
-// Indexes ready-to-run boilerplate apps from the official
-// streamlit/llm-examples GitHub repo (fetched via /api/streamlit-examples).
+// Indexes curated, hand-crafted dashboard boilerplate examples
+// (fetched via /api/streamlit-examples, which serves them inline).
 //
-// Each entry contains the full Python source of a working Streamlit app,
-// making it ideal for few-shot prompting: the LLM sees real, tested code
-// for patterns like st.chat_message, st.file_uploader, streamlit-feedback,
-// LangChain agents, etc.
+// Each entry contains the full Python source of a complete Streamlit
+// dashboard, making it ideal for few-shot prompting: the LLM sees real,
+// tested patterns for KPI cards, Plotly charts, filterable tables,
+// real-time monitors, multi-page admin panels, and financial dashboards.
 //
 // This engine is complementary to the streamlit-rag-engine (which indexes
 // the official llms.txt API reference). Together they give the generator:
-//   • llms.txt  → "what API exists and its signature"
-//   • llm-examples → "how real apps are structured in practice"
+//   • llms.txt       → "what API exists and its signature"
+//   • dashboard-examples → "how real dashboard apps are structured"
 // ---------------------------------------------------------------------------
 
 export interface ExampleEntry {
@@ -159,17 +159,36 @@ function bm25Score(queryTokens: string[], doc: BM25Doc): number {
 // Portuguese → English expansion (mirrors streamlit-rag-engine.ts)
 // ---------------------------------------------------------------------------
 const PT_EN: Array<[RegExp, string]> = [
-  [/\bchatbot|chat\s*bot\b/gi, 'chatbot chat message'],
-  [/\bconversa[çc][ãa]o\b/gi, 'chat conversation messages'],
-  [/\bfeedback\b/gi, 'feedback thumbs rating'],
-  [/\bpesquisa|busca\b/gi, 'search agent duckduckgo'],
+  // Dashboard / visualização
+  [/\bdashboard\b/gi, 'dashboard admin panel overview'],
+  [/\bpainel\b/gi, 'dashboard admin panel'],
+  [/\brelat[oó]rio\b/gi, 'dashboard report chart metrics'],
+  [/\bm[eé]trica|indicador\b/gi, 'metric kpi indicator'],
+  [/\bgr[aá]fico\b/gi, 'chart plotly bar line scatter'],
+  [/\btabela|dados\b/gi, 'table dataframe filter data'],
+  [/\bfiltro\b/gi, 'filter sidebar selectbox multiselect slider'],
+  [/\bvendas\b/gi, 'sales revenue kpi metric'],
+  [/\breceita\b/gi, 'revenue financial kpi'],
+  // Charts
+  [/\bbarras?\b/gi, 'bar chart bar_chart plotly'],
+  [/\blinha|linhas\b/gi, 'line chart line_chart plotly'],
+  [/\bpizza|torta|donut\b/gi, 'pie donut chart plotly'],
+  [/\bdispers[aã]o\b/gi, 'scatter plot plotly'],
+  [/\bcandlestick|vela\b/gi, 'candlestick ohlc financial plotly'],
+  [/\bhist[oó]grama\b/gi, 'histogram distribution plotly'],
+  [/\bmapa\b/gi, 'map folium plotly geo'],
+  // Tempo real
+  [/\btempo.?real|ao.?vivo\b/gi, 'realtime live auto-refresh monitoring'],
+  [/\bmonitor(amento)?\b/gi, 'monitoring realtime live gauge'],
+  // Navegação / admin
+  [/\bnavega[çc][ãa]o|p[aá]ginas?\b/gi, 'multipage navigation sidebar radio'],
+  [/\blogin|autentica[çc][ãa]o\b/gi, 'login session_state admin'],
+  [/\bfinance|a[çc][oõ]es\b/gi, 'finance stock financial candlestick portfolio'],
+  // UI básico
   [/\bupload\b/gi, 'upload file_uploader'],
   [/\bformul[áa]rio\b/gi, 'form submit'],
-  [/\bagente\b/gi, 'agent langchain'],
-  [/\bprompt\b/gi, 'prompt template langchain'],
   [/\bficheiro|arquivo\b/gi, 'file upload'],
-  [/\bperguntas?\b/gi, 'qa question answer'],
-  [/\binternet|web\b/gi, 'search internet duckduckgo'],
+  [/\bdownload\b/gi, 'download csv button'],
 ]
 
 function expandQuery(query: string): string[] {

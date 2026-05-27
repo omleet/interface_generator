@@ -6,13 +6,12 @@ export interface PythonExportOptions {
   generationTimeMs?: number
 }
 
-// ─── Clipboard helper (shared with code-viewer) ───────────────────────────────
+// ─── Clipboard helper ─────────────────────────────────────────────────────────
 
 export async function copyToClipboard(content: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(content)
   } catch {
-    // Fallback for older browsers
     const el = document.createElement('textarea')
     el.value = content
     el.style.position = 'fixed'
@@ -45,13 +44,16 @@ function generatePythonReadme(code: GeneratedPythonCode, options: PythonExportOp
   const timestamp = new Date().toISOString()
   const timeInfo = generationTimeMs ? ` in ${(generationTimeMs / 1000).toFixed(1)}s` : ''
 
-  // Extract port from ui.run(...)
-  const portMatch = code.python.match(/ui\.run\s*\([^)]*port\s*=\s*(\d+)/i)
-  const port = portMatch?.[1] ?? '8080'
-
-  // Extract title
-  const titleMatch = code.python.match(/ui\.run\s*\([^)]*title\s*=\s*['"]([^'"]+)['"]/i)
+  // FIX: Extract title from st.set_page_config (was using NiceGUI ui.run regex)
+  const titleMatch = code.python.match(/set_page_config\s*\([^)]*page_title\s*=\s*['"]([^'"]+)['"]/i)
   const appTitle = titleMatch?.[1] ?? 'Streamlit App'
+
+  // Build deps list from actual requirements.txt content
+  const depLines = code.requirements
+    .split('\n')
+    .filter((l) => l.trim() && !l.startsWith('streamlit'))
+    .map((l) => `- ${l.split('>=')[0].trim()}`)
+    .join('\n')
 
   return `# ${appTitle}
 
@@ -82,41 +84,24 @@ pip install -r requirements.txt
 streamlit run app.py
 \`\`\`
 
-The app will open automatically in your browser at **http://localhost:${port}**.
+The app will open automatically in your browser at **http://localhost:8501**.
 
 ## Dependencies
 
 - [Streamlit](https://streamlit.io) — Python UI framework
-${code.requirements
-  .split('\n')
-  .filter((l) => !l.startsWith('streamlit'))
-  .map((l) => `- ${l.split('>=')[0]}`)
-  .join('\n')}
+${depLines}
 
-## API Integration Guide
+## Connecting to real data
 
-To connect this app to real data sources, replace the sample data dicts/lists in \`app.py\` with API calls.
-
-### Example using httpx (async)
-
-\`\`\`python
-import httpx
-
-async def fetch_data():
-    async with httpx.AsyncClient() as client:
-        response = await client.get('http://your-api/endpoint')
-        return response.json()
-\`\`\`
-
-Then call \`await fetch_data()\` inside your async page function decorated with \`@ui.page('/')\`.
-
-### Example using requests (sync)
+Replace the inline sample data lists/dicts in \`app.py\` with API calls:
 
 \`\`\`python
 import requests
 
-def fetch_data():
-    response = requests.get('http://your-api/endpoint')
+@st.cache_data(ttl=300)
+def fetch_data(endpoint: str):
+    response = requests.get(endpoint)
+    response.raise_for_status()
     return response.json()
 \`\`\`
 
@@ -138,7 +123,6 @@ export async function exportPythonAsZip(
   zip.file('requirements.txt', code.requirements)
   zip.file('README.md', generatePythonReadme(code, options))
 
-  // Add a minimal .gitignore
   zip.file(
     '.gitignore',
     `__pycache__/
