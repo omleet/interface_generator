@@ -573,6 +573,8 @@ Review the existing plan above carefully. Fix any issues, add missing sections, 
                   isStreaming={generationState === 'generating'}
                   userPrompt={currentPrompt}
                   generationTimeMs={generationTimeMs}
+                  llmConfig={llmConfig}
+                  onCodeEdited={(updated) => setGeneratedPythonCode(updated)}
                 />
               ) : (
                 <CodeViewer

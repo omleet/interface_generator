@@ -1,6 +1,6 @@
 'use client'
 
-import { Code2, Terminal, Copy, Check } from 'lucide-react'
+import { Code2, Terminal, Copy, Check, Info } from 'lucide-react'
 import { useState } from 'react'
 import type { GeneratedPythonCode } from '@/lib/python-generator'
 
@@ -11,6 +11,8 @@ interface PythonPreviewProps {
 
 export function PythonPreview({ code, className }: PythonPreviewProps) {
   const [copied, setCopied] = useState(false)
+  const [copiedInstall, setCopiedInstall] = useState(false)
+const [copiedRun, setCopiedRun] = useState(false)
 
   const handleCopyCmd = async () => {
     const reqs = code?.requirements ?? 'streamlit pandas plotly'
@@ -89,33 +91,72 @@ export function PythonPreview({ code, className }: PythonPreviewProps) {
           <Terminal className="h-4 w-4" />
           <span>How to run</span>
         </div>
-        <div className="space-y-2">
-          <div className="rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground break-all">
-            {installCmd}
-            
-          </div>
-           
-          <div className="rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">
-            {runCmd}
-          </div>
+<div className="space-y-2">
+  <div>
+    <div className="flex items-center gap-2 mb-1">
+      <span className="text-[10px] font-mono bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-1.5 py-0.5 rounded">
+        1. Install dependencies
+      </span>
+    </div>
+    <div className="flex items-center gap-2">
+      <div className="relative group flex-1">
+        <div className="rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground overflow-x-auto pr-10">
+          <code>{installCmd}</code>
         </div>
         <button
           type="button"
-          onClick={handleCopyCmd}
-          className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          onClick={async () => {
+            await navigator.clipboard.writeText(installCmd)
+            setCopiedInstall(true)
+            setTimeout(() => setCopiedInstall(false), 2000)
+          }}
+          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 hover:bg-muted-foreground/20 rounded transition-colors"
         >
-          {copied ? (
-            <>
-              <Check className="h-3.5 w-3.5 text-green-500" />
-              <span>Copied!</span>
-            </>
+          {copiedInstall ? (
+            <Check className="h-3.5 w-3.5 text-green-500" />
           ) : (
-            <>
-              <Copy className="h-3.5 w-3.5" />
-              <span>Copy commands</span>
-            </>
+            <Copy className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
           )}
         </button>
+      </div>
+      <div className="relative group cursor-help shrink-0">
+        <Info className="h-4 w-4 text-muted-foreground" />
+        <span className="absolute bottom-full right-0 mb-1 hidden group-hover:block bg-gray-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-10">
+          Only needed for first run or missing packages.
+        </span>
+      </div>
+    </div>
+  </div>
+  
+  <div>
+    <div className="flex items-center gap-2 mb-1">
+      <span className="text-[10px] font-mono bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 px-1.5 py-0.5 rounded">
+        2. Run the app
+      </span>
+    </div>
+    <div className="relative group">
+      <div className="rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground pr-10">
+        {runCmd}
+      </div>
+      <button
+        type="button"
+        onClick={async () => {
+          await navigator.clipboard.writeText(runCmd)
+          setCopiedRun(true)
+          setTimeout(() => setCopiedRun(false), 2000)
+        }}
+        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 hover:bg-muted-foreground/20 rounded transition-colors"
+      >
+        {copiedRun ? (
+          <Check className="h-3.5 w-3.5 text-green-500" />
+        ) : (
+          <Copy className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+        )}
+      </button>
+    </div>
+  </div>
+</div>
+        
       </div>
 
       <p className="text-xs text-muted-foreground text-center max-w-sm">
