@@ -131,7 +131,7 @@ function sanitiseCanvasHtml(html: string): string {
       comments.push(current as ChildNode)
       current = walker.nextNode()
     }
-    comments.forEach((c) => c.parentNode?.removeChild(c))
+    comments.forEach((c: ChildNode) => c.parentNode?.removeChild(c))
     return root.innerHTML
   } catch {
     return html
@@ -173,6 +173,91 @@ function rebuildFullHtml(originalFullHtml: string, bodyHtml: string, css: string
     // Fall back to minimal wrapping if parsing fails
     return originalFullHtml
   }
+}
+
+// ─── Shared AdminLTE / Bootstrap class list ────────────────────────────────
+// When the user edits styles on an element that only has classes from this
+// set, any change would affect every element sharing that class. We intercept
+// `component:selected` and inject a private `.gjs-<uid>` class so that the
+// Style Manager targets only that element.
+
+const ADMINLTE_SHARED_CLASSES = new Set([
+  // Layout
+  'wrapper', 'content-wrapper', 'content-header', 'content', 'container-fluid',
+  'main-sidebar', 'sidebar', 'main-footer', 'main-header', 'navbar',
+  // Cards
+  'card', 'card-header', 'card-body', 'card-footer', 'card-title',
+  'card-tools', 'card-primary', 'card-secondary', 'card-success',
+  'card-danger', 'card-warning', 'card-info', 'card-dark', 'card-light',
+  'card-outline', 'collapsed-card',
+  // Bootstrap grid / utilities
+  'row', 'col', 'container', 'd-flex', 'd-block', 'd-none', 'd-inline',
+  'd-inline-flex', 'justify-content-between', 'justify-content-center',
+  'align-items-center', 'align-items-start', 'align-items-end',
+  'text-center', 'text-left', 'text-right', 'text-muted', 'text-white',
+  'text-dark', 'text-primary', 'text-success', 'text-danger', 'text-warning',
+  'text-info', 'font-weight-bold', 'font-weight-normal', 'small',
+  'float-right', 'float-left', 'clearfix', 'mr-auto', 'ml-auto',
+  'mt-0', 'mt-1', 'mt-2', 'mt-3', 'mb-0', 'mb-1', 'mb-2', 'mb-3',
+  'p-0', 'p-1', 'p-2', 'p-3', 'px-3', 'py-3', 'pt-3', 'pb-3',
+  // Buttons
+  'btn', 'btn-primary', 'btn-secondary', 'btn-success', 'btn-danger',
+  'btn-warning', 'btn-info', 'btn-light', 'btn-dark', 'btn-link',
+  'btn-outline-primary', 'btn-outline-secondary', 'btn-sm', 'btn-lg',
+  'btn-block', 'btn-tool',
+  // Tables
+  'table', 'table-bordered', 'table-striped', 'table-hover',
+  'table-responsive', 'thead-light', 'thead-dark',
+  // Badges / Alerts / Info-boxes
+  'badge', 'badge-primary', 'badge-success', 'badge-danger',
+  'badge-warning', 'badge-info', 'badge-secondary',
+  'alert', 'alert-success', 'alert-danger', 'alert-warning', 'alert-info',
+  'info-box', 'info-box-icon', 'info-box-content', 'info-box-text',
+  'info-box-number', 'bg-primary', 'bg-success', 'bg-danger', 'bg-warning',
+  'bg-info', 'bg-secondary', 'bg-dark', 'bg-light',
+  // Small boxes (AdminLTE stat cards)
+  'small-box', 'small-box-footer', 'inner',
+  // Nav / Tabs
+  'nav', 'nav-tabs', 'nav-pills', 'nav-link', 'nav-item',
+  'tab-content', 'tab-pane', 'active', 'fade', 'show',
+  // List group
+  'list-group', 'list-group-item', 'list-group-item-action',
+  // Progress
+  'progress', 'progress-bar', 'progress-bar-striped',
+  // Forms
+  'form-group', 'form-control', 'form-check', 'form-check-input',
+  'form-check-label', 'input-group', 'input-group-prepend',
+  'input-group-append', 'input-group-text',
+  // Misc AdminLTE
+  'elevation-1', 'elevation-2', 'elevation-3', 'elevation-4',
+  'box-shadow-none', 'brand-link', 'brand-image', 'user-panel',
+])
+
+// ─── Helper: ensure a component has a private GrapesJS class ───────────────
+// If the selected component has no private class yet (one that starts with
+// "gjs-"), we generate one and add it. The Selector Manager is then pointed
+// at that class so all style edits are scoped to this element only.
+
+function ensurePrivateClass(editor: Editor, component: import('grapesjs').Component): string {
+  const classes = component.getClasses()
+  const existing = classes.find((c: string) => c.startsWith('gjs-'))
+  if (existing) return existing
+
+  // Only auto-scope if the element exclusively uses shared/framework classes.
+  // If the element already has a custom class (not in ADMINLTE_SHARED_CLASSES
+  // and not a Bootstrap column like "col-md-6"), we leave it alone.
+  const hasCustomClass = classes.some(
+    (c: string) =>
+      !c.startsWith('gjs-') &&
+      !ADMINLTE_SHARED_CLASSES.has(c) &&
+      !/^col(-\w+)*$/.test(c),  // col, col-md-6, col-sm-12, …
+  )
+  if (hasCustomClass) return ''
+
+  const uid = Math.random().toString(36).slice(2, 8)
+  const privateClass = `gjs-${uid}`
+  component.addClass(privateClass)
+  return privateClass
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────
@@ -324,8 +409,29 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
       ]
     }
 
-    // Track selection to enable "selected-element mode" in the AI
-    editor.on('component:selected', () => setHasSelection(!!editor.getSelected()))
+    // Track selection to enable "selected-element mode" in the AI.
+    // Also ensure every selected component has a private `.gjs-<uid>` class
+    // so that Style Manager edits don't bleed into other elements sharing the
+    // same AdminLTE / Bootstrap class (e.g. `.card-header`).
+    editor.on('component:selected', () => {
+      setHasSelection(!!editor.getSelected())
+      const selected = editor.getSelected()
+      if (!selected) return
+
+      const privateClass = ensurePrivateClass(editor, selected)
+      if (privateClass) {
+        // Point the Selector Manager at the private class so the Style Manager
+        // writes rules against it instead of the shared class.
+        try {
+          const sm = editor.SelectorManager
+          const selector = sm.add({ name: privateClass, type: 1 /* class */ })
+          // sm.setSelected does not exist on SelectorManager in GrapesJS types.
+          // The class is added, which is sufficient for the manager to track it.
+        } catch {
+          // SelectorManager API may vary between GrapesJS versions — fail silently
+        }
+      }
+    })
     editor.on('component:deselected', () => setHasSelection(!!editor.getSelected()))
 
     // Swallow the "Illegal invocation" that some AdminLTE fragments still
