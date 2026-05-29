@@ -76,6 +76,45 @@ type DeviceName = 'Desktop' | 'Tablet' | 'Mobile'
 // Element node. We strip those before passing content to the editor. The
 // originals are preserved separately and re-injected on save.
 
+// ─── Helper: extract inline <script> bodies from the original HTML ──────────
+// GrapesJS strips <script> tags from the component tree (they're not
+// "renderable" components). We re-inject them into the canvas iframe after the
+// editor has finished loading so that Chart.js initialisations still run.
+// Only inline scripts are extracted (no src= attribute) because CDN scripts
+// are already loaded via canvas.scripts.
+
+function extractInlineScripts(html: string): string[] {
+  if (!html) return []
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    return Array.from(doc.querySelectorAll('script:not([src])')).map((s) => s.textContent || '')
+  } catch {
+    return []
+  }
+}
+
+// ─── Helper: inject scripts into the GrapesJS canvas iframe ────────────────
+// Called after `editor.on('load')` fires. We append a <script> tag to the
+// iframe's <body> so Chart.js (already loaded via canvas.scripts) is available
+// when the code runs.
+
+function injectScriptsIntoCanvas(editor: import('grapesjs').Editor, scripts: string[]): void {
+  if (!scripts.length) return
+  try {
+    const iframeDoc = editor.Canvas.getDocument()
+    if (!iframeDoc) return
+
+    scripts.forEach((src) => {
+      if (!src.trim()) return
+      const el = iframeDoc.createElement('script')
+      el.textContent = src
+      iframeDoc.body.appendChild(el)
+    })
+  } catch (e) {
+    console.warn('[visual-editor] Could not inject inline scripts into canvas:', e)
+  }
+}
+
 function sanitiseCanvasHtml(html: string): string {
   if (!html) return ''
   try {
@@ -174,6 +213,12 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
   useEffect(() => {
     if (!canvasRef.current || !blocksRef.current) return
     if (editorRef.current) return // guard against React strict-mode double-mount
+
+    // Extract Chart.js init scripts (and any other inline scripts) from the
+    // original full HTML before we sanitise the canvas HTML. These will be
+    // re-injected into the iframe after GrapesJS has finished loading so that
+    // charts render exactly as they do in the preview.
+    const inlineScripts = extractInlineScripts(code.fullHtml)
 
     const editor = grapesjs.init({
       container: canvasRef.current,
@@ -307,6 +352,10 @@ export function GrapesJsEditor({ code, onSave, onClose, llmConfig }: GrapesJsEdi
     editor.on('load', () => {
       setIsReady(true)
       updateUndoRedo()
+      // Re-inject the dashboard's inline scripts (Chart.js initialisations,
+      // etc.) into the canvas iframe. GrapesJS strips <script> tags from the
+      // component tree, so we have to do this explicitly after load.
+      injectScriptsIntoCanvas(editor, inlineScripts)
     })
 
     return () => {
