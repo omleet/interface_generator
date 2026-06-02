@@ -58,7 +58,7 @@ Create a \`config.js\` file in the root folder:
 // config.js - API Configuration
 const API_CONFIG = {
   // Base URL for your backend API
-  baseUrl: 'http://localhost:3000/api',
+  baseUrl: 'http://localhost:3001/api',
   
   // Authentication (if required)
   auth: {
@@ -287,7 +287,7 @@ const ENV = window.location.hostname === 'localhost' ? 'development' : 'producti
 
 const API_CONFIGS = {
   development: {
-    baseUrl: 'http://localhost:3000/api',
+    baseUrl: 'http://localhost:3001/api',
     auth: { type: 'bearer', token: 'dev-token' }
   },
   production: {
@@ -351,7 +351,7 @@ export async function exportAsZip(
 // Rename to config.js and fill in your values
 
 const API_CONFIG = {
-  baseUrl: 'http://localhost:3000/api',
+  baseUrl: 'http://localhost:3001/api',
   
   auth: {
     type: 'bearer',
