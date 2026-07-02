@@ -734,7 +734,7 @@ export function PromptInput({
             <div className="px-3 py-2 border-t border-border bg-muted/20 flex items-center justify-between">
               <span className="text-[10px] text-muted-foreground">
                 {filteredExamples.length === EXAMPLES.length
-                  ? `${EXAMPLES.length} examples · AdminLTE compatible`
+                  ? `${EXAMPLES.length} examples`
                   : `${filteredExamples.length} of ${EXAMPLES.length} examples`}
               </span>
               <span className="text-[10px] text-muted-foreground/50">Click to use as prompt</span>

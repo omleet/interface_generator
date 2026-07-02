@@ -7,9 +7,8 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'AdminLTE Dashboard Generator',
-  description: 'Generate AdminLTE dashboards using local LLMs with RAG',
-  generator: 'v0.app',
+  title: 'Dashboard Generator',
+  description: 'Generate dashboards with local/cloud LLMs',
   icons: {
     icon: [
       {

@@ -371,7 +371,7 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
                     onClick={() => onConfigChange({ ...config, qualityMode: 'custom' as QualityMode, customTemperature: config.customTemperature ?? 0.5 })}
                   >
                     Custom
-                    <span className="block text-xs font-normal opacity-75">temperatura livre</span>
+                    <span className="block text-xs font-normal opacity-75">Change as you like</span>
                   </button>
                 </div>
 
