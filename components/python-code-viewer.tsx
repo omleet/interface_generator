@@ -10,16 +10,21 @@ import {
   FileCode2,
   FileText,
   MessageSquare,
-  X,
   Send,
   StopCircle,
   RotateCcw,
   ChevronLeft,
+  Bug,
 } from 'lucide-react'
 import type { GeneratedPythonCode } from '@/lib/python-generator'
 import { exportPythonAsZip, copyToClipboard, downloadPythonFile } from '@/lib/python-file-exporter'
 import type { LLMConfig } from '@/lib/llm-client'
-import { editPythonCode, type ChatMessage } from '@/lib/python-code-editor'
+import {
+  editPythonCode,
+  fixPythonError,
+  looksLikeTraceback,
+  type ChatMessage,
+} from '@/lib/python-code-editor'
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -29,27 +34,37 @@ interface PythonCodeViewerProps {
   isStreaming?: boolean
   userPrompt?: string
   generationTimeMs?: number
-  /** LLM config forwarded from the parent so the editor can call the same LLM */
   llmConfig?: LLMConfig
-  /** Called when the user confirms an edited version, so the parent can update its state */
   onCodeEdited?: (updated: GeneratedPythonCode) => void
 }
 
+// ─── Chat mode ────────────────────────────────────────────────────────────────
+
+// 'edit'  — natural-language instruction to change the code
+// 'error' — user pastes a traceback; LLM diagnoses and fixes it
+type ChatMode = 'edit' | 'error'
+
 // ─── Chat bubble ──────────────────────────────────────────────────────────────
 
-function ChatBubble({ msg }: { msg: ChatMessage & { isStreaming?: boolean } }) {
+function ChatBubble({
+  msg,
+  isStreaming,
+}: {
+  msg: ChatMessage
+  isStreaming?: boolean
+}) {
   const isUser = msg.role === 'user'
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-2`}>
       <div
-        className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap wrap-break-word ${
+        className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap break-words ${
           isUser
             ? 'bg-primary text-primary-foreground rounded-br-sm'
             : 'bg-muted text-foreground rounded-bl-sm font-mono'
         }`}
       >
         {msg.content}
-        {msg.isStreaming && (
+        {isStreaming && (
           <span
             className="inline-block w-1.5 h-3 bg-current opacity-70 animate-pulse ml-0.5 align-middle"
             aria-hidden="true"
@@ -76,12 +91,11 @@ export function PythonCodeViewer({
   const [copiedTab, setCopiedTab] = useState<string | null>(null)
   const scrollRef = useRef<HTMLPreElement>(null)
 
-  // ── Edit-chat state ───────────────────────────────────────────────────────
+  // ── Edit/fix panel state ──────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false)
+  const [chatMode, setChatMode] = useState<ChatMode>('edit')
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([])
-  /** The code that the edit session is modifying (starts from code.python) */
   const [editingCode, setEditingCode] = useState<string>('')
-  /** Streamed tokens from the LLM while editing */
   const [editStreaming, setEditStreaming] = useState<string>('')
   const [isEditing, setIsEditing] = useState(false)
   const [editError, setEditError] = useState<string>('')
@@ -89,6 +103,17 @@ export function PythonCodeViewer({
   const abortRef = useRef<AbortController | null>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Detect when the user types a traceback and offer to switch modes
+  const [tracebackDetected, setTracebackDetected] = useState(false)
+
+  useEffect(() => {
+    if (instruction.length > 40) {
+      setTracebackDetected(looksLikeTraceback(instruction))
+    } else {
+      setTracebackDetected(false)
+    }
+  }, [instruction])
 
   // ── Auto-scroll during generation ─────────────────────────────────────────
   useEffect(() => {
@@ -98,12 +123,10 @@ export function PythonCodeViewer({
     }
   }, [streamingContent, isStreaming])
 
-  // Auto-scroll chat to bottom whenever a new message appears or tokens stream
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chatHistory, editStreaming])
 
-  // Focus textarea when edit mode opens
   useEffect(() => {
     if (editMode) {
       setTimeout(() => textareaRef.current?.focus(), 80)
@@ -133,22 +156,49 @@ export function PythonCodeViewer({
     })
   }
 
-  // ── Edit-mode helpers ──────────────────────────────────────────────────────
-  const openEditMode = useCallback(() => {
+  // ── Open / close panel ─────────────────────────────────────────────────────
+  const openPanel = useCallback((mode: ChatMode) => {
     if (!code?.python) return
     setEditingCode(code.python)
     setChatHistory([])
     setEditStreaming('')
     setEditError('')
     setInstruction('')
+    setChatMode(mode)
     setEditMode(true)
   }, [code])
 
-  const closeEditMode = useCallback(() => {
+  const closePanel = useCallback(() => {
     abortRef.current?.abort()
     setEditMode(false)
   }, [])
 
+  const switchMode = useCallback((mode: ChatMode) => {
+    abortRef.current?.abort()
+    setEditStreaming('')
+    setIsEditing(false)
+    setChatHistory([])
+    setEditError('')
+    setInstruction('')
+    setChatMode(mode)
+  }, [])
+
+  // ── Apply updated code from LLM ────────────────────────────────────────────
+  const applyUpdatedCode = useCallback(
+    (updatedCode: string, successMsg: string) => {
+      setEditStreaming('')
+      setEditingCode(updatedCode)
+      const assistantMsg: ChatMessage = { role: 'assistant', content: successMsg }
+      setChatHistory((prev) => [...prev, assistantMsg])
+      setIsEditing(false)
+      if (onCodeEdited && code) {
+        onCodeEdited({ ...code, python: updatedCode })
+      }
+    },
+    [onCodeEdited, code],
+  )
+
+  // ── Send edit instruction ──────────────────────────────────────────────────
   const handleSendInstruction = useCallback(async () => {
     const trimmed = instruction.trim()
     if (!trimmed || !llmConfig || isEditing) return
@@ -159,50 +209,59 @@ export function PythonCodeViewer({
     setInstruction('')
     setEditStreaming('')
     setIsEditing(true)
+    setTracebackDetected(false)
 
     const controller = new AbortController()
     abortRef.current = controller
-
     let accumulated = ''
 
+    const isTraceback = chatMode === 'error' || looksLikeTraceback(trimmed)
+
     try {
-      await editPythonCode(
-        editingCode,
-        chatHistory,
-        trimmed,
-        llmConfig,
-        {
-          onToken: (token) => {
-            accumulated += token
-            setEditStreaming(accumulated)
+      if (isTraceback) {
+        // Switch mode visually if we detected a traceback in edit mode
+        if (chatMode !== 'error') setChatMode('error')
+        await fixPythonError(
+          editingCode,
+          trimmed,
+          chatHistory,
+          llmConfig,
+          {
+            onToken: (token) => { accumulated += token; setEditStreaming(accumulated) },
+            onComplete: (updatedCode) =>
+              applyUpdatedCode(updatedCode, '✓ Error fixed. You can run the app again or continue describing issues.'),
+            onError: (error) => {
+              setEditStreaming('')
+              setEditError(error.message)
+              setIsEditing(false)
+            },
           },
-          onComplete: (updatedCode) => {
-            setEditStreaming('')
-            setEditingCode(updatedCode)
-            const assistantMsg: ChatMessage = {
-              role: 'assistant',
-              content: '✓ Code updated. You can continue asking for changes, or close the editor to apply.',
-            }
-            setChatHistory((prev) => [...prev, assistantMsg])
-            setIsEditing(false)
-            // Propagate to parent
-            if (onCodeEdited && code) {
-              onCodeEdited({ ...code, python: updatedCode })
-            }
+          controller.signal,
+        )
+      } else {
+        await editPythonCode(
+          editingCode,
+          chatHistory,
+          trimmed,
+          llmConfig,
+          {
+            onToken: (token) => { accumulated += token; setEditStreaming(accumulated) },
+            onComplete: (updatedCode) =>
+              applyUpdatedCode(updatedCode, '✓ Code updated. You can continue asking for changes or paste a new traceback if errors remain.'),
+            onError: (error) => {
+              setEditStreaming('')
+              setEditError(error.message)
+              setIsEditing(false)
+            },
           },
-          onError: (error) => {
-            setEditStreaming('')
-            setEditError(error.message)
-            setIsEditing(false)
-          },
-        },
-        controller.signal,
-      )
+          controller.signal,
+        )
+      }
     } catch {
       setEditStreaming('')
       setIsEditing(false)
     }
-  }, [instruction, llmConfig, isEditing, editingCode, chatHistory, onCodeEdited, code])
+  }, [instruction, llmConfig, isEditing, editingCode, chatHistory, chatMode, applyUpdatedCode])
 
   const handleCancelEdit = useCallback(() => {
     abortRef.current?.abort()
@@ -221,7 +280,7 @@ export function PythonCodeViewer({
   }, [code])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       handleSendInstruction()
     }
@@ -230,9 +289,7 @@ export function PythonCodeViewer({
   // ── Derived display content ────────────────────────────────────────────────
   const displayContent = isStreaming ? (streamingContent ?? '') : (code?.python ?? '')
   const viewerCode = editMode ? editingCode : displayContent
-
-  const tabContent =
-    activeTab === 'requirements' && code ? code.requirements : viewerCode
+  const tabContent = activeTab === 'requirements' && code ? code.requirements : viewerCode
 
   // ── Empty state ────────────────────────────────────────────────────────────
   if (!displayContent && !isStreaming) {
@@ -244,12 +301,19 @@ export function PythonCodeViewer({
     )
   }
 
+  // ── Placeholder text per mode ──────────────────────────────────────────────
+  const placeholderText =
+    chatMode === 'error'
+      ? 'Paste the full Python traceback here… (Enter to send)'
+      : 'Describe what to change… or paste a traceback to auto-fix (Enter to send, Shift+Enter for newline)'
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full">
-      {/* ── Toolbar ─────────────────────────────────────────────────────── */}
+
+      {/* ── Toolbar ───────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between border-b px-4 py-2 gap-2 flex-wrap">
-        {/* Tab pills — always visible; in edit mode shows which code you're viewing */}
+        {/* Tab pills */}
         <div className="flex items-center gap-1 rounded-lg border bg-muted/40 p-1">
           <button
             type="button"
@@ -281,12 +345,33 @@ export function PythonCodeViewer({
 
         {/* Action buttons */}
         <div className="flex gap-2 flex-wrap">
-          {/* Edit mode toggle — only shown when code is ready and llmConfig is available */}
           {code?.python && !isStreaming && llmConfig && (
             editMode ? (
               <>
                 <Button
-                  variant="outline"
+                  variant={chatMode === 'error' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => switchMode('error')}
+                  disabled={isEditing}
+                  className="h-8"
+                  title="Switch to error-fix mode: paste a traceback to auto-correct"
+                >
+                  <Bug className="mr-1.5 h-3.5 w-3.5" />
+                  Fix Error
+                </Button>
+                <Button
+                  variant={chatMode === 'edit' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => switchMode('edit')}
+                  disabled={isEditing}
+                  className="h-8"
+                  title="Switch to edit mode: ask for code changes in natural language"
+                >
+                  <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+                  Edit Code
+                </Button>
+                <Button
+                  variant="ghost"
                   size="sm"
                   onClick={handleResetEdits}
                   disabled={isEditing}
@@ -299,25 +384,36 @@ export function PythonCodeViewer({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={closeEditMode}
+                  onClick={closePanel}
                   className="h-8"
-                  title="Close the edit panel"
                 >
                   <ChevronLeft className="mr-1.5 h-3.5 w-3.5" />
                   Done
                 </Button>
               </>
             ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={openEditMode}
-                className="h-8"
-                title="Open chat to request code changes"
-              >
-                <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
-                Edit
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openPanel('error')}
+                  className="h-8"
+                  title="Paste a traceback to auto-fix the error"
+                >
+                  <Bug className="mr-1.5 h-3.5 w-3.5" />
+                  Fix Error
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openPanel('edit')}
+                  className="h-8"
+                  title="Open chat to request code changes"
+                >
+                  <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+                  Edit
+                </Button>
+              </>
             )
           )}
 
@@ -329,15 +425,9 @@ export function PythonCodeViewer({
             className="h-8"
           >
             {copiedTab === activeTab ? (
-              <>
-                <Check className="mr-1.5 h-3.5 w-3.5" />
-                Copied
-              </>
+              <><Check className="mr-1.5 h-3.5 w-3.5" />Copied</>
             ) : (
-              <>
-                <Copy className="mr-1.5 h-3.5 w-3.5" />
-                Copy
-              </>
+              <><Copy className="mr-1.5 h-3.5 w-3.5" />Copy</>
             )}
           </Button>
           <Button
@@ -363,19 +453,17 @@ export function PythonCodeViewer({
         </div>
       </div>
 
-      {/* ── Body: split when editMode is active ─────────────────────────── */}
+      {/* ── Body: side-by-side when edit panel is open ────────────────────── */}
       <div className={`flex flex-1 min-h-0 ${editMode ? 'flex-row' : 'flex-col'}`}>
 
-        {/* Code area */}
+        {/* Code pane */}
         <ScrollArea className={`${editMode ? 'w-1/2 border-r' : 'flex-1'} min-h-0`}>
           <pre
             ref={scrollRef}
             className="text-xs leading-relaxed p-4 font-mono whitespace-pre overflow-x-auto text-foreground min-w-0"
           >
             {editMode
-              /* In edit mode always show the current editing code (or streaming tokens) */
               ? (editStreaming || editingCode)
-              /* Normal mode */
               : isStreaming && activeTab === 'python'
                 ? (streamingContent ?? '')
                 : tabContent}
@@ -388,36 +476,42 @@ export function PythonCodeViewer({
           </pre>
         </ScrollArea>
 
-        {/* ── Chat panel (only in edit mode) ────────────────────────────── */}
+        {/* Chat / fix panel */}
         {editMode && (
           <div className="w-1/2 flex flex-col min-h-0">
-            {/* Chat header */}
-            <div className="px-3 py-2 border-b bg-muted/30 flex items-center gap-2">
-              <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+
+            {/* Panel header */}
+            <div className={`px-3 py-2 border-b flex items-center gap-2 ${chatMode === 'error' ? 'bg-destructive/5' : 'bg-muted/30'}`}>
+              {chatMode === 'error' ? (
+                <Bug className="h-3.5 w-3.5 text-destructive" />
+              ) : (
+                <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
               <span className="text-xs font-medium text-muted-foreground">
-                Ask for changes
+                {chatMode === 'error' ? 'Paste traceback to auto-fix' : 'Ask for changes'}
               </span>
+              {chatMode === 'error' && (
+                <span className="ml-auto text-xs text-destructive/70">Run app → copy error → paste here</span>
+              )}
             </div>
 
             {/* Messages */}
             <ScrollArea className="flex-1 min-h-0 px-3 py-2">
               {chatHistory.length === 0 && !isEditing && (
                 <p className="text-xs text-muted-foreground text-center mt-4 leading-relaxed px-2">
-                  Describe what you want to change in the code.<br />
-                  <span className="opacity-60">e.g. "Fix a code-related error" or "Add a sidebar filter for year" or "Use a bar chart instead of a line chart"</span>
+                  {chatMode === 'error'
+                    ? <>Run your Streamlit app, copy the full error traceback from the terminal, and paste it here. The LLM will diagnose and fix the issue automatically.</>
+                    : <>Describe what you want to change.<br /><span className="opacity-60">e.g. &quot;Add a sidebar filter for year&quot; or &quot;Use a bar chart instead of a pie chart&quot;</span><br /><span className="opacity-50">You can also paste a traceback here and the LLM will auto-detect it.</span></>
+                  }
                 </p>
               )}
               {chatHistory.map((msg, i) => (
                 <ChatBubble key={i} msg={msg} />
               ))}
-              {isEditing && editStreaming && (
+              {isEditing && (
                 <ChatBubble
-                  msg={{ role: 'assistant', content: '⟳ Updating code…', isStreaming: true } as ChatMessage & { isStreaming: boolean }}
-                />
-              )}
-              {isEditing && !editStreaming && (
-                <ChatBubble
-                  msg={{ role: 'assistant', content: '⟳ Thinking…', isStreaming: true } as ChatMessage & { isStreaming: boolean }}
+                  msg={{ role: 'assistant', content: chatMode === 'error' ? '⟳ Analysing error and fixing code…' : '⟳ Updating code…' }}
+                  isStreaming
                 />
               )}
               {editError && (
@@ -428,7 +522,15 @@ export function PythonCodeViewer({
               <div ref={chatBottomRef} />
             </ScrollArea>
 
-            {/* Input area */}
+            {/* Traceback detection hint */}
+            {tracebackDetected && chatMode === 'edit' && (
+              <div className="mx-3 mb-1 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-1.5 flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+                <Bug className="h-3.5 w-3.5 shrink-0" />
+                <span>Looks like a traceback — sending as an error fix request.</span>
+              </div>
+            )}
+
+            {/* Input */}
             <div className="border-t p-2 flex gap-2 items-end bg-background">
               <textarea
                 ref={textareaRef}
@@ -436,9 +538,9 @@ export function PythonCodeViewer({
                 onChange={(e) => setInstruction(e.target.value)}
                 onKeyDown={handleKeyDown}
                 disabled={isEditing}
-                placeholder="Describe the change… (Enter to send, Shift+Enter for newline)"
-                rows={2}
-                className="flex-1 resize rounded-md border bg-muted/40 px-3 py-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+                placeholder={placeholderText}
+                rows={chatMode === 'error' ? 4 : 2}
+                className="flex-1 resize rounded-md border bg-muted/40 px-3 py-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 font-mono"
               />
               {isEditing ? (
                 <Button
@@ -471,13 +573,16 @@ export function PythonCodeViewer({
         <div className="border-t px-4 py-2 flex items-center gap-4 text-xs text-muted-foreground">
           <span>{(editMode ? editingCode : code.python).split('\n').length} lines</span>
           {editMode && editingCode !== code.python && (
-            <span className="text-amber-500 font-medium">● edited</span>
+            <span className="text-amber-500 font-medium">edited</span>
           )}
           {generationTimeMs && !editMode && (
             <span>Generated in {(generationTimeMs / 1000).toFixed(1)}s</span>
           )}
           <span className="ml-auto">
-            Run: <code className="font-mono bg-muted px-1 rounded">pip install streamlit pandas plotly &amp;&amp; streamlit run app.py</code>
+            Run:{' '}
+            <code className="font-mono bg-muted px-1 rounded">
+              streamlit run app.py
+            </code>
           </span>
         </div>
       )}

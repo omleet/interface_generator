@@ -113,7 +113,8 @@ API RULES (violations raise errors at runtime):
 - px.bar/line/area/pie + categorical color → color_discrete_map={} or color_discrete_sequence=px.colors.qualitative.Set2
 - px.scatter + numeric color → color_continuous_scale='Blues'  (NEVER mix these)
 - color_discrete_sequence= must be a LIST, never a string like 'Set2'
-- All px.* column args (x=,y=,color=,size=) must exist in the DataFrame
+- All px.* column args (x=,y=,color=,size=) must exist in the DataFrame as actual column names
+- trendline='ols' requires statsmodels which is NOT installed by default → raises ModuleNotFoundError. Use trendline='lowess' instead (no extra dependency)
 - df.map() not applymap(); pd.concat() not df.append(); st.rerun() not experimental_rerun()
 - Pandas freq: 'h','min','s','ME','YE','QE' — never 'H','T','A','M','Q'
 - global keyword only inside def blocks — never at module level
@@ -121,10 +122,26 @@ API RULES (violations raise errors at runtime):
 - Every st.button() must trigger a visible action (st.success/toast/balloons)
 - Session state: always guard reads: if 'key' not in st.session_state: st.session_state.key = default
 
+DATAFRAME COLUMN LENGTHS (critical — mismatch raises ValueError at startup):
+- Every column list in pd.DataFrame({...}) MUST have the SAME number of elements.
+  WRONG: pd.DataFrame({'A': [1,2,3], 'B': [4,5]})           # 3 vs 2 → crash
+  RIGHT: pd.DataFrame({'A': [1,2,3], 'B': [4,5,6]})         # both 3 → OK
+- pd.date_range(..., periods=N) produces exactly N dates; every other column must have exactly N elements too.
+  WRONG: pd.DataFrame({'Date': pd.date_range('2024-01', periods=6), 'Val': [10,20,30]})   # 6 vs 3 → crash
+  RIGHT: pd.DataFrame({'Date': pd.date_range('2024-01', periods=3), 'Val': [10,20,30]})   # both 3 → OK
+- Count list elements before writing them. Prefer explicit lists over date_range for ≤20 rows.
+- When using date_range, build ALL other columns as: [val]*N or [f(i) for i in range(N)].
+
+AUTHENTICATION / LOGIN:
+- NEVER generate authentication or login code unless the user explicitly asks for it.
+- NEVER call st.experimental_user, st.auth_login(), or any non-existent Streamlit auth API.
+- If login is needed, use a simple st.text_input password check — nothing more.
+
 QUALITY:
 - 6–10 rows of realistic domain-specific data in every dataframe
 - No TODO, no placeholder, no Lorem ipsum — complete working app only
 - No "if __name__ == '__main__':" block
+- Small models struggle with complex patterns: keep widgets at module level (not deeply nested in helper functions), avoid dynamic widget creation inside loops unless essential, and prefer explicit data lists over pd.date_range.
 
 EXAMPLE (Sales Dashboard):
 import streamlit as st
@@ -277,6 +294,29 @@ UNIQUE WIDGET KEYS (Streamlit raises StreamlitDuplicateElementId when two widget
 
 26. EVERY st.button, st.download_button, st.checkbox, st.radio, st.selectbox, st.multiselect, st.slider, st.select_slider, st.text_input, st.text_area, st.number_input, st.date_input, st.time_input, st.file_uploader, st.color_picker, st.toggle and st.form_submit_button MUST have a unique key='...' argument. If the same widget type appears more than once in the file (same label or not), each occurrence needs a distinct key.
 27. Buttons inside loops MUST use a key derived from the loop variable, e.g. st.button('Edit', key=f'edit_{row["id"]}').
+
+PLOTLY COLUMN REFERENCES:
+28a. Every argument to px.* that names a column — x=, y=, color=, size=, hover_name=, facet_col=, animation_frame=, etc. — MUST be an actual column name present in the DataFrame passed as the first argument.
+     - WRONG: px.bar(df_counts, x='Date', y='Count', color='Type')  when 'Type' is not a column of df_counts
+     - RIGHT: Rewrite the groupby/aggregation to include 'Type' in the result, OR remove color='Type'.
+     - Check every single px.* call: look at the DataFrame being passed and confirm each column arg exists in it.
+
+TRENDLINE DEPENDENCIES:
+28b. NEVER use trendline='ols' unless you also write 'import statsmodels.api as sm' at the top AND add statsmodels to requirements.txt.
+     - trendline='ols' silently imports statsmodels at runtime → raises ModuleNotFoundError if not installed.
+     - Use trendline='lowess' instead — it is built into plotly with zero extra dependencies.
+
+DATAFRAME COLUMN LENGTHS — "ValueError: All arrays must be of the same length":
+28. Every column in pd.DataFrame({...}) must have the SAME number of elements as every other column.
+    - WRONG: pd.DataFrame({'A': [1,2,3], 'B': [4,5]})  → crash (3 vs 2)
+    - RIGHT: pd.DataFrame({'A': [1,2,3], 'B': [4,5,6]}) → OK
+    - pd.date_range(periods=N) counts as N elements; every other column must also have N elements.
+    - To fix: count the elements in the longest column, then add or remove elements from all shorter columns to match. Repeat the last element to pad, or remove trailing elements to truncate.
+
+AUTHENTICATION / LOGIN — NEVER generate:
+29. Do NOT generate any authentication or login code unless the user explicitly asked for it.
+    - NEVER call st.experimental_user, st.auth_login(), st.login(), or any Streamlit auth API that does not exist in standard Streamlit.
+    - If the code contains such calls, remove them entirely and replace with a plain content section.
 </checklist>
 
 Return the complete corrected Python. Start immediately with the first import line.
@@ -352,6 +392,20 @@ function validatePython(code: string): PythonValidationResult {
     issues.push('st.session_state keys are read without an initialisation guard (if "key" not in st.session_state:)')
   }
 
+  // Detect phantom auth APIs that do not exist in standard Streamlit
+  const phantomAuthApis = [
+    'st.auth_login', 'st.login(', 'st.experimental_user',
+    'st.user(', 'authenticator.login', 'streamlit_authenticator',
+  ]
+  for (const api of phantomAuthApis) {
+    if (code.includes(api)) {
+      issues.push(
+        `Non-existent Streamlit auth API: '${api}' — this raises AttributeError at runtime. ` +
+        `Remove all authentication code unless it was explicitly requested by the user.`,
+      )
+    }
+  }
+
   issues.push(...detectPythonSyntaxIssues(code))
   issues.push(...detectDeprecatedApis(code))
   issues.push(...detectDuplicateWidgetKeys(code))
@@ -359,6 +413,7 @@ function validatePython(code: string): PythonValidationResult {
   issues.push(...detectPlotlyColorMismatch(code))
   issues.push(...detectThirdPartyApiMisuse(code))
   issues.push(...detectRuntimePatternIssues(code))
+  issues.push(...detectDateRangeInconsistency(code))
 
   return { isComplete: issues.length === 0, issues }
 }
@@ -368,6 +423,44 @@ function validatePython(code: string): PythonValidationResult {
 // Catches the common LLM mistake of using color_continuous_scale= with a
 // categorical column, or color_discrete_sequence= with a numeric column.
 // These both cause TypeError at runtime in plotly.express.
+/**
+ * Given a px.* call's args string, extract the DataFrame variable name passed
+ * as the first positional arg or as data_frame=.
+ */
+function extractDataFrameVar(args: string): string | null {
+  // data_frame=df  or  data_frame = df
+  const kwM = /\bdata_frame\s*=\s*(\w+)/.exec(args)
+  if (kwM) return kwM[1]
+  // First positional arg: px.bar(df, x=...) — grab first identifier before comma/keyword
+  const posM = /^\s*(\w+)\s*[,)]/.exec(args)
+  if (posM && !['x', 'y', 'color', 'size', 'hover'].includes(posM[1])) return posM[1]
+  return null
+}
+
+/**
+ * Collect all column names known to be defined in a given DataFrame variable
+ * by scanning pd.DataFrame({...}) constructor calls and df.rename(columns={...}).
+ * Returns null if the DataFrame cannot be found statically.
+ */
+function collectKnownColumns(dfVar: string, code: string): Set<string> | null {
+  const escaped = dfVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // pd.DataFrame({...}) assigned to dfVar
+  const assignRe = new RegExp(`\\b${escaped}\\s*=\\s*pd\\.DataFrame\\s*\\(`)
+  const m = assignRe.exec(code)
+  if (!m) return null
+
+  const bodyResult = extractDataFrameBody(code, m.index + m[0].length - 1)
+  if (!bodyResult) return null
+
+  const cols = new Set<string>()
+  const colRe = /['"](\w[\w\s]*?)['"]\s*:/g
+  let km: RegExpExecArray | null
+  while ((km = colRe.exec(bodyResult.body)) !== null) {
+    cols.add(km[1])
+  }
+  return cols.size > 0 ? cols : null
+}
+
 function detectPlotlyColorMismatch(code: string): string[] {
   const issues: string[] = []
   const calls = findPxCalls(code)
@@ -378,6 +471,21 @@ function detectPlotlyColorMismatch(code: string): string[] {
     if (!colorM) continue
 
     const colName = colorM[2]
+
+    // ── New: detect color column that doesn't exist in the DataFrame ──────────
+    const dfVar = extractDataFrameVar(args)
+    if (dfVar) {
+      const knownCols = collectKnownColumns(dfVar, code)
+      if (knownCols && !knownCols.has(colName)) {
+        issues.push(
+          `px.${fn}() uses color='${colName}' but that column does not exist in '${dfVar}'. ` +
+          `Known columns: ${[...knownCols].join(', ')}. ` +
+          `Either add a '${colName}' column to '${dfVar}' or remove the color= argument.`,
+        )
+        continue // no point checking scale type if column is missing
+      }
+    }
+
     const hasCont = /\bcolor_continuous_scale\s*=/.test(args)
     const hasDiscSeq = /\bcolor_discrete_sequence\s*=/.test(args)
     const hasDiscMap = /\bcolor_discrete_map\s*=/.test(args)
@@ -509,6 +617,181 @@ function detectRuntimePatternIssues(code: string): string[] {
     !/st\.download_button\([^)]*key\s*=\s*f['"]/.test(code)
   ) {
     issues.push("st.download_button() inside a loop must use an f-string key= derived from the loop variable, e.g. key=f'download_{i}'.")
+  }
+
+  // trendline='ols' silently requires statsmodels which is not installed by default.
+  // plotly raises ModuleNotFoundError at runtime when statsmodels is missing.
+  // Use trendline='lowess' (built-in, no extra dep) unless statsmodels is explicitly imported.
+  if (/trendline\s*=\s*['"]ols['"]/.test(code) && !code.includes('import statsmodels')) {
+    issues.push(
+      "trendline='ols' requires the 'statsmodels' package which may not be installed. " +
+      "Replace with trendline='lowess' (built-in, no extra dependencies) or add 'statsmodels' to requirements and pip install it.",
+    )
+  }
+
+  return issues
+}
+
+// ─── DataFrame column-length consistency detection ────────────────────────────
+// "ValueError: All arrays must be of the same length" is the #1 runtime crash.
+// It occurs whenever a pd.DataFrame({...}) dict literal has columns with different
+// numbers of elements.  We extract every inline list literal from each DataFrame
+// constructor and compare lengths.  We also handle pd.date_range(periods=N) as a
+// column whose length is N.
+//
+// Note: this is a best-effort static analysis — it cannot evaluate arbitrary
+// Python expressions, but it catches the most common LLM mistake of writing
+// column lists with different element counts.
+
+interface DataFrameColumnInfo {
+  name: string
+  length: number
+  source: 'list' | 'date_range'
+}
+
+/**
+ * Extracts the body of the first complete `pd.DataFrame({...})` starting at
+ * `startIdx` in `code` and returns { body, endIdx } or null if not found.
+ */
+function extractDataFrameBody(code: string, startIdx: number): { body: string; endIdx: number } | null {
+  // Find opening '{'
+  let i = startIdx
+  while (i < code.length && code[i] !== '{') i++
+  if (i >= code.length) return null
+
+  const bodyStart = i + 1
+  let depth = 1
+  let inStr: string | null = null
+  i++
+  while (i < code.length && depth > 0) {
+    const c = code[i]
+    if (inStr) {
+      if (c === '\\') { i += 2; continue }
+      if (code.slice(i, i + inStr.length) === inStr) { i += inStr.length; inStr = null; continue }
+      i++; continue
+    }
+    if (c === '"' || c === "'") {
+      const triple = code.slice(i, i + 3)
+      inStr = (triple === '"""' || triple === "'''") ? triple : c
+      i += inStr.length; continue
+    }
+    if (c === '{' || c === '(' || c === '[') depth++
+    else if (c === '}' || c === ')' || c === ']') depth--
+    i++
+  }
+  return { body: code.slice(bodyStart, i - 1), endIdx: i }
+}
+
+/**
+ * Count elements in a flat comma-separated Python list literal body (the part
+ * between [ and ]).  Returns null if the content is too complex to evaluate
+ * statically (contains nested brackets or expression calls).
+ */
+function countListElements(inner: string): number | null {
+  // Reject complex expressions — nested brackets, comprehensions, function calls
+  if (/[\[\]{]/.test(inner)) return null
+  // Allow simple function calls like pd.Timestamp(...) that produce one element
+  const parens = (inner.match(/\(/g) || []).length
+  if (parens > 3) return null  // too complex
+
+  // Split on top-level commas (not inside parentheses)
+  let depth = 0
+  const items: string[] = []
+  let start = 0
+  for (let i = 0; i < inner.length; i++) {
+    if (inner[i] === '(') depth++
+    else if (inner[i] === ')') depth--
+    else if (inner[i] === ',' && depth === 0) {
+      items.push(inner.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  const last = inner.slice(start).trim()
+  if (last) items.push(last)
+  return items.filter(Boolean).length
+}
+
+/**
+ * Parse the columns defined inside a pd.DataFrame({...}) body string.
+ * Returns an array of { name, length, source } for each column whose length
+ * can be statically determined.
+ */
+function parseDataFrameColumns(body: string): DataFrameColumnInfo[] {
+  const cols: DataFrameColumnInfo[] = []
+
+  // Match column definitions: 'ColName': [...] or 'ColName': pd.date_range(...)
+  const colRe = /['"](\w[\w\s]*)['"]:\s*/g
+  let m: RegExpExecArray | null
+  while ((m = colRe.exec(body)) !== null) {
+    const name = m[1]
+    const valueStart = m.index + m[0].length
+
+    // Check if value is a list literal
+    if (body[valueStart] === '[') {
+      // Find matching ]
+      let depth = 1
+      let i = valueStart + 1
+      while (i < body.length && depth > 0) {
+        if (body[i] === '[') depth++
+        else if (body[i] === ']') depth--
+        i++
+      }
+      const inner = body.slice(valueStart + 1, i - 1)
+      const len = countListElements(inner)
+      if (len !== null) cols.push({ name, length: len, source: 'list' })
+
+    } else {
+      // Check if value is pd.date_range(... periods=N ...)
+      const drSnippet = body.slice(valueStart, valueStart + 200)
+      const periodsM = /pd\.date_range\([^)]*\bperiods\s*=\s*(\d+)/.exec(drSnippet)
+      if (periodsM) {
+        const periods = parseInt(periodsM[1], 10)
+        if (!isNaN(periods) && periods > 0) {
+          cols.push({ name, length: periods, source: 'date_range' })
+        }
+      }
+    }
+  }
+
+  return cols
+}
+
+function detectDateRangeInconsistency(code: string): string[] {
+  const issues: string[] = []
+  const dfRe = /\bpd\.DataFrame\s*\(/g
+  let m: RegExpExecArray | null
+
+  while ((m = dfRe.exec(code)) !== null) {
+    const bodyResult = extractDataFrameBody(code, m.index + m[0].length - 1)
+    if (!bodyResult) continue
+
+    const cols = parseDataFrameColumns(bodyResult.body)
+    if (cols.length < 2) continue
+
+    // Compute the mode length (most frequent)
+    const lengthCounts = new Map<number, number>()
+    for (const c of cols) lengthCounts.set(c.length, (lengthCounts.get(c.length) ?? 0) + 1)
+    let modeLen = cols[0].length
+    let modeCount = 0
+    for (const [len, cnt] of lengthCounts) {
+      if (cnt > modeCount) { modeLen = len; modeCount = cnt }
+    }
+
+    const outliers = cols.filter((c) => c.length !== modeLen)
+    if (outliers.length === 0) continue
+
+    const summary = cols.map((c) => `'${c.name}'(${c.length})`).join(', ')
+    const fix = outliers.map((c) =>
+      c.source === 'date_range'
+        ? `change periods=${c.length} → periods=${modeLen} in '${c.name}'`
+        : `adjust list for '${c.name}' from ${c.length} → ${modeLen} element(s)`,
+    ).join('; ')
+
+    issues.push(
+      `pd.DataFrame column length mismatch — ${summary}. ` +
+      `All columns must have the same length (${modeLen}). Fix: ${fix}. ` +
+      `This raises "ValueError: All arrays must be of the same length" at runtime.`,
+    )
   }
 
   return issues
@@ -1055,6 +1338,24 @@ function fixPlotlyColorArgs(code: string): string {
     const colorM = /\bcolor\s*=\s*(['"])([\w\s]+)\1/.exec(argsText)
     if (!colorM) continue
     const colName = colorM[2]
+
+    // ── If the color column is entirely absent from the DataFrame, strip it ──
+    const dfVar = extractDataFrameVar(argsText)
+    if (dfVar) {
+      const knownCols = collectKnownColumns(dfVar, result)
+      if (knownCols && !knownCols.has(colName)) {
+        // Remove color='...' and any orphaned color scale arg
+        let fixed = argsText
+          .replace(/,?\s*\bcolor\s*=\s*(['"])[\w\s]+\1/g, '')
+          .replace(/,?\s*\bcolor_continuous_scale\s*=\s*(['"][\w_]+['"]|\w+)/g, '')
+          .replace(/,?\s*\bcolor_discrete_sequence\s*=\s*(\[[^\]]*\]|\w+)/g, '')
+          .replace(/,?\s*\bcolor_discrete_map\s*=\s*(\{[^}]*\}|\w+)/g, '')
+          .replace(/^\s*,/, '')  // leading comma if color was first arg
+        result = result.slice(0, argsStart) + fixed + result.slice(argsEnd)
+        continue
+      }
+    }
+
     const colType = inferColumnType(colName, result)
     const fixedArgs = fixColorParams(argsText, fn, colType)
     if (fixedArgs !== argsText) {
@@ -1114,6 +1415,123 @@ function injectUseContainerWidth(code: string, fnName: string): string {
     offset += insertion.length
   }
   return result
+}
+
+// ─── Fix: pd.DataFrame column length mismatches ───────────────────────────────
+// "ValueError: All arrays must be of the same length" crashes apps at startup.
+// Strategy: find every pd.DataFrame({...}) with inline list literals, compute
+// the modal (most common) column length, then truncate longer lists or pad
+// shorter ones by repeating the last element.  pd.date_range(periods=N) columns
+// are also adjusted.
+//
+// We only mutate SIMPLE flat list literals (no comprehensions, no nested lists,
+// no complex expressions) so we never break correct code.
+function fixDataFrameLengthMismatch(code: string): string {
+  let out = code
+  const dfRe = /\bpd\.DataFrame\s*\(/g
+  let m: RegExpExecArray | null
+  const patches: Array<{ start: number; end: number; replacement: string }> = []
+
+  while ((m = dfRe.exec(out)) !== null) {
+    const bodyResult = extractDataFrameBody(out, m.index + m[0].length - 1)
+    if (!bodyResult) continue
+
+    const cols = parseDataFrameColumns(bodyResult.body)
+    if (cols.length < 2) continue
+
+    // Compute modal length
+    const lengthCounts = new Map<number, number>()
+    for (const c of cols) lengthCounts.set(c.length, (lengthCounts.get(c.length) ?? 0) + 1)
+    let modeLen = cols[0].length
+    let modeCount = 0
+    for (const [len, cnt] of lengthCounts) {
+      if (cnt > modeCount || (cnt === modeCount && len > modeLen)) {
+        modeLen = len; modeCount = cnt
+      }
+    }
+
+    const outliers = cols.filter((c) => c.length !== modeLen && c.source === 'list')
+    if (outliers.length === 0) continue
+
+    // Build patches for each outlier column's list literal
+    for (const col of outliers) {
+      // Find the exact list literal for this column in the body
+      const colPattern = new RegExp(
+        `(['"]${col.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"])\\s*:\\s*\\[`,
+      )
+      const bodyStart = out.indexOf(bodyResult.body, m.index)
+      if (bodyStart === -1) continue
+      const localMatch = colPattern.exec(bodyResult.body)
+      if (!localMatch) continue
+
+      const listOpenIdx = bodyStart + localMatch.index + localMatch[0].length - 1 // points to '['
+      // Find matching ']'
+      let i = listOpenIdx + 1
+      let depth = 1
+      let inStr: string | null = null
+      while (i < out.length && depth > 0) {
+        const c = out[i]
+        if (inStr) {
+          if (c === '\\') { i += 2; continue }
+          if (out.slice(i, i + inStr.length) === inStr) { i += inStr.length; inStr = null; continue }
+          i++; continue
+        }
+        if (c === '"' || c === "'") {
+          const triple = out.slice(i, i + 3)
+          inStr = (triple === '"""' || triple === "'''") ? triple : c
+          i += inStr.length; continue
+        }
+        if (c === '[') depth++
+        else if (c === ']') depth--
+        i++
+      }
+      const listCloseIdx = i - 1
+
+      const inner = out.slice(listOpenIdx + 1, listCloseIdx)
+      const elemCount = countListElements(inner)
+      if (elemCount === null) continue // too complex to fix safely
+
+      // Split into elements respecting parentheses (for function calls like pd.Timestamp(...))
+      let depth2 = 0
+      const elems: string[] = []
+      let start = 0
+      for (let j = 0; j < inner.length; j++) {
+        if (inner[j] === '(') depth2++
+        else if (inner[j] === ')') depth2--
+        else if (inner[j] === ',' && depth2 === 0) {
+          elems.push(inner.slice(start, j).trim())
+          start = j + 1
+        }
+      }
+      const lastElem = inner.slice(start).trim()
+      if (lastElem) elems.push(lastElem)
+
+      let fixedElems: string[]
+      if (elems.length > modeLen) {
+        // Truncate
+        fixedElems = elems.slice(0, modeLen)
+      } else {
+        // Pad by repeating the last element
+        const pad = elems[elems.length - 1] || 'None'
+        fixedElems = [...elems]
+        while (fixedElems.length < modeLen) fixedElems.push(pad)
+      }
+
+      patches.push({
+        start: listOpenIdx + 1,
+        end: listCloseIdx,
+        replacement: fixedElems.join(', '),
+      })
+    }
+  }
+
+  // Apply patches in reverse order (last first) to keep indices valid
+  patches.sort((a, b) => b.start - a.start)
+  for (const p of patches) {
+    out = out.slice(0, p.start) + p.replacement + out.slice(p.end)
+  }
+
+  return out
 }
 
 function autoFixCommonErrors(code: string): string {
@@ -1192,6 +1610,18 @@ function autoFixCommonErrors(code: string): string {
   // Must run AFTER injectUniqueWidgetKeys so auto-injected keys are also covered.
   out = fixDuplicateExplicitKeys(out)
 
+  // Fix pd.DataFrame column length mismatches ("ValueError: All arrays must be
+  // of the same length").  This is the #1 runtime crash when an LLM miscounts
+  // list elements.  We truncate or pad lists to the modal (most common) length.
+  out = fixDataFrameLengthMismatch(out)
+
+  // Replace trendline='ols' with trendline='lowess' when statsmodels is not
+  // imported.  'ols' silently requires statsmodels at runtime; 'lowess' is
+  // built into plotly with no extra dependency.
+  if (/trendline\s*=\s*['"]ols['"]/.test(out) && !out.includes('import statsmodels')) {
+    out = out.replace(/trendline\s*=\s*['"]ols['"]/g, "trendline='lowess'")
+  }
+
   return out
 }
 
@@ -1257,7 +1687,7 @@ function truncateContext(context: string, maxChars: number): string {
   return (cutAt > 0 ? truncated.slice(0, cutAt) : truncated) + '\n\n# [context truncated]'
 }
 
-// ─── Planning ─────────────────────────────────────────────────────────────────
+// ─── Planning ───────────────────────────────────────────────���─────────────────
 
 const PYTHON_PLANNING_SYSTEM_PROMPT = `<role>
 You are an expert Streamlit application architect. Your job is to produce a clear, structured implementation plan for a Streamlit Python application BEFORE any code is written.
@@ -1680,6 +2110,7 @@ const PACKAGE_RULES: Array<[RegExp, string]> = [
   [/import matplotlib|from matplotlib/, 'matplotlib>=3.7.0'],
   [/import seaborn|from seaborn/, 'seaborn>=0.13.0'],
   [/import scipy|from scipy/, 'scipy>=1.11.0'],
+  [/import statsmodels|from statsmodels/, 'statsmodels>=0.14.0'],
   // ML
   [/import sklearn|from sklearn/, 'scikit-learn>=1.3.0'],
   [/import xgboost|from xgboost/, 'xgboost>=2.0.0'],

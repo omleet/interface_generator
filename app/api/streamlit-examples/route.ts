@@ -30,7 +30,7 @@ const DASHBOARD_EXAMPLES: ExampleEntry[] = [
   {
     title: 'KPI Metrics Dashboard',
     description:
-      'Multi-column KPI cards with delta indicators, a line chart for trends, and a bar chart for comparisons. Uses st.metric, st.columns, st.line_chart, st.bar_chart, and sidebar filters.',
+      'Multi-column KPI cards with delta indicators, a line chart for trends, and a bar chart for comparisons. Sidebar filters that actually filter the data. Uses st.metric, st.columns, st.line_chart, st.bar_chart.',
     format: 'py',
     url: 'https://docs.streamlit.io/develop/api-reference/data/st.metric',
     tags: ['kpi', 'metric', 'dashboard', 'cards', 'delta', 'columns', 'line_chart', 'bar_chart', 'sidebar', 'filter', 'vendas', 'receita', 'revenue'],
@@ -39,48 +39,59 @@ import pandas as pd
 import numpy as np
 
 st.set_page_config(page_title="KPI Dashboard", layout="wide")
-st.title("📊 KPI Dashboard")
+st.title("KPI Dashboard")
 
 # ── Sidebar filters ──────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Filters")
-    period = st.selectbox("Period", ["Last 7 days", "Last 30 days", "Last 90 days"])
-    region = st.multiselect("Region", ["North", "South", "East", "West"], default=["North", "South"])
+    period = st.selectbox("Period", ["Last 7 days", "Last 30 days", "Last 90 days"], key="period_sel")
+    region = st.multiselect("Region", ["North", "South", "East", "West"],
+                            default=["North", "South"], key="region_sel")
 
-# ── Synthetic data ───────────────────────────────────────────────────────────
+# ── Synthetic data (all columns share the same length = days) ────────────────
 days = {"Last 7 days": 7, "Last 30 days": 30, "Last 90 days": 90}[period]
 rng = np.random.default_rng(42)
 dates = pd.date_range(end=pd.Timestamp.today(), periods=days)
-df = pd.DataFrame({
-    "date": dates,
-    "revenue": rng.integers(8_000, 15_000, days).cumsum(),
-    "users": rng.integers(200, 600, days),
-    "orders": rng.integers(50, 200, days),
-    "churn": rng.uniform(0.01, 0.05, days),
-})
+
+# Build one row per (date, region) combination so the region filter is useful
+region_list = region if region else ["North", "South", "East", "West"]
+rows = []
+for d in dates:
+    for r in region_list:
+        rows.append({
+            "date": d,
+            "region": r,
+            "revenue": int(rng.integers(8_000, 15_000)),
+            "users": int(rng.integers(200, 600)),
+            "orders": int(rng.integers(50, 200)),
+            "churn": float(rng.uniform(0.01, 0.05)),
+        })
+df = pd.DataFrame(rows)
 
 # ── KPI row ──────────────────────────────────────────────────────────────────
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total Revenue", f"€{df['revenue'].iloc[-1]:,.0f}", delta=f"+€{df['revenue'].diff().iloc[-1]:,.0f}")
-col2.metric("Active Users", f"{df['users'].sum():,}", delta=f"+{int(df['users'].diff().iloc[-1])}")
-col3.metric("Orders", f"{df['orders'].sum():,}", delta=f"+{int(df['orders'].diff().iloc[-1])}")
-col4.metric("Churn Rate", f"{df['churn'].iloc[-1]:.1%}", delta=f"{df['churn'].diff().iloc[-1]:+.2%}", delta_color="inverse")
+col1.metric("Total Revenue", f"€{df['revenue'].sum():,.0f}")
+col2.metric("Total Users", f"{df['users'].sum():,}")
+col3.metric("Total Orders", f"{df['orders'].sum():,}")
+col4.metric("Avg Churn Rate", f"{df['churn'].mean():.1%}", delta_color="inverse")
 
 st.divider()
 
 # ── Charts ───────────────────────────────────────────────────────────────────
+daily = df.groupby("date")[["revenue", "orders"]].sum().reset_index()
+
 c1, c2 = st.columns(2)
 with c1:
     st.subheader("Revenue Over Time")
-    st.line_chart(df.set_index("date")["revenue"])
+    st.line_chart(daily.set_index("date")["revenue"])
 
 with c2:
     st.subheader("Orders per Day")
-    st.bar_chart(df.set_index("date")["orders"])
+    st.bar_chart(daily.set_index("date")["orders"])
 
 # ── Data table ───────────────────────────────────────────────────────────────
 with st.expander("Raw data"):
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, use_container_width=True, hide_index=True)
 `,
   },
 
@@ -237,10 +248,10 @@ st.download_button("⬇️ Download CSV", csv, "filtered_data.csv", "text/csv")
   {
     title: 'Real-Time Auto-Refresh Dashboard',
     description:
-      'Live dashboard that auto-refreshes using st.empty and time.sleep in a loop, or st_autorefresh. Shows a live gauge chart, updating metrics, and a rolling time-series chart — pattern for monitoring dashboards.',
+      'Live dashboard using st.empty placeholders and st.rerun() for auto-refresh. Shows a live gauge chart, updating metrics, and a rolling time-series chart. Pattern for monitoring dashboards.',
     format: 'py',
     url: 'https://docs.streamlit.io/develop/api-reference/layout/st.empty',
-    tags: ['realtime', 'real-time', 'live', 'auto-refresh', 'autorefresh', 'monitoring', 'gauge', 'empty', 'loop', 'tempo_real', 'monitoramento', 'atualização'],
+    tags: ['realtime', 'real-time', 'live', 'auto-refresh', 'autorefresh', 'monitoring', 'gauge', 'empty', 'rerun', 'tempo_real', 'monitoramento', 'atualização'],
     content: `import streamlit as st
 import pandas as pd
 import numpy as np
@@ -248,70 +259,74 @@ import plotly.graph_objects as go
 import time
 
 st.set_page_config(page_title="Live Monitor", layout="wide")
-st.title("⚡ Live System Monitor")
-st.caption("Auto-refreshes every 2 seconds. Press Stop to pause.")
+st.title("Live System Monitor")
 
-# ── Rolling history (session state) ─────────────────────────────────────────
+# ── Controls ─────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.header("Controls")
+    running = st.toggle("Live updates", value=True, key="running_toggle")
+    refresh_interval = st.slider("Refresh interval (s)", 1, 10, 2, key="refresh_slider")
+    max_points = st.slider("History length", 10, 120, 60, key="max_points_slider")
+
+# ── Rolling history (session state) ──────────────────────────────────────────
 if "history" not in st.session_state:
     st.session_state.history = pd.DataFrame(columns=["time", "cpu", "memory", "requests"])
 
-MAX_POINTS = 60  # keep last 60 data points
-
-# ── Layout placeholders ──────────────────────────────────────────────────────
-col1, col2, col3 = st.columns(3)
-metric_cpu = col1.empty()
-metric_mem = col2.empty()
-metric_req = col3.empty()
-
-chart_placeholder = st.empty()
-gauge_placeholder = st.empty()
-
-# ── Live loop ────────────────────────────────────────────────────────────────
+# ── Simulate one live reading ─────────────────────────────────────────────────
 rng = np.random.default_rng()
+cpu = float(rng.uniform(20, 95))
+memory = float(rng.uniform(40, 85))
+requests = int(rng.integers(50, 500))
 
-for _ in range(300):  # run for ~10 minutes max
-    # Simulate live readings
-    cpu = float(rng.uniform(20, 95))
-    memory = float(rng.uniform(40, 85))
-    requests = int(rng.integers(50, 500))
+new_row = pd.DataFrame([{
+    "time": pd.Timestamp.now(),
+    "cpu": cpu,
+    "memory": memory,
+    "requests": requests,
+}])
+st.session_state.history = pd.concat(
+    [st.session_state.history, new_row], ignore_index=True
+).tail(max_points)
+hist = st.session_state.history
 
-    new_row = pd.DataFrame([{"time": pd.Timestamp.now(), "cpu": cpu, "memory": memory, "requests": requests}])
-    st.session_state.history = pd.concat([st.session_state.history, new_row], ignore_index=True).tail(MAX_POINTS)
+# ── KPI metrics ───────────────────────────────────────────────────────────────
+col1, col2, col3 = st.columns(3)
+prev_cpu = hist["cpu"].iloc[-2] if len(hist) > 1 else cpu
+prev_mem = hist["memory"].iloc[-2] if len(hist) > 1 else memory
+prev_req = hist["requests"].iloc[-2] if len(hist) > 1 else requests
 
-    hist = st.session_state.history
+col1.metric("CPU", f"{cpu:.1f}%", delta=f"{cpu - prev_cpu:+.1f}%", delta_color="inverse")
+col2.metric("Memory", f"{memory:.1f}%", delta=f"{memory - prev_mem:+.1f}%", delta_color="inverse")
+col3.metric("Requests/s", requests, delta=int(requests - prev_req))
 
-    # Metrics
-    metric_cpu.metric("🖥️ CPU", f"{cpu:.1f}%", delta=f"{cpu - hist['cpu'].iloc[-2]:.1f}%" if len(hist) > 1 else None, delta_color="inverse")
-    metric_mem.metric("🧠 Memory", f"{memory:.1f}%", delta=f"{memory - hist['memory'].iloc[-2]:.1f}%" if len(hist) > 1 else None, delta_color="inverse")
-    metric_req.metric("📡 Requests/s", requests, delta=requests - hist['requests'].iloc[-2] if len(hist) > 1 else None)
+# ── Rolling chart ─────────────────────────────────────────────────────────────
+st.subheader("Rolling History")
+st.line_chart(hist.set_index("time")[["cpu", "memory"]], use_container_width=True)
 
-    # Rolling chart
-    with chart_placeholder.container():
-        st.subheader("Rolling History")
-        st.line_chart(hist.set_index("time")[["cpu", "memory"]], use_container_width=True)
+# ── Gauge ─────────────────────────────────────────────────────────────────────
+fig = go.Figure(go.Indicator(
+    mode="gauge+number+delta",
+    value=cpu,
+    delta={"reference": 70, "increasing": {"color": "red"}, "decreasing": {"color": "green"}},
+    gauge={
+        "axis": {"range": [0, 100]},
+        "bar": {"color": "#1f77b4"},
+        "steps": [
+            {"range": [0, 50], "color": "#d4edda"},
+            {"range": [50, 80], "color": "#fff3cd"},
+            {"range": [80, 100], "color": "#f8d7da"},
+        ],
+        "threshold": {"line": {"color": "red", "width": 4}, "thickness": 0.75, "value": 80},
+    },
+    title={"text": "CPU Usage (%)"},
+))
+fig.update_layout(height=250, margin=dict(t=40, b=10))
+st.plotly_chart(fig, use_container_width=True)
 
-    # Gauge
-    with gauge_placeholder.container():
-        fig = go.Figure(go.Indicator(
-            mode="gauge+number+delta",
-            value=cpu,
-            delta={"reference": 70, "increasing": {"color": "red"}, "decreasing": {"color": "green"}},
-            gauge={
-                "axis": {"range": [0, 100]},
-                "bar": {"color": "#1f77b4"},
-                "steps": [
-                    {"range": [0, 50], "color": "#d4edda"},
-                    {"range": [50, 80], "color": "#fff3cd"},
-                    {"range": [80, 100], "color": "#f8d7da"},
-                ],
-                "threshold": {"line": {"color": "red", "width": 4}, "thickness": 0.75, "value": 80},
-            },
-            title={"text": "CPU Usage (%)"},
-        ))
-        fig.update_layout(height=250, margin=dict(t=40, b=10))
-        st.plotly_chart(fig, use_container_width=True)
-
-    time.sleep(2)
+# ── Auto-rerun ────────────────────────────────────────────────────────────────
+if running:
+    time.sleep(refresh_interval)
+    st.rerun()
 `,
   },
 
@@ -319,10 +334,10 @@ for _ in range(300):  # run for ~10 minutes max
   {
     title: 'Multi-Page Admin Dashboard with Sidebar Nav',
     description:
-      'Admin-style dashboard with sidebar navigation using st.sidebar radio (simulating pages), permission-style login with st.session_state, a summary page with metrics+charts, and a settings page. Pattern for admin panels.',
+      'Admin-style dashboard with sidebar navigation using st.sidebar radio (simulating pages): Overview with metrics+charts, User Management table, Products charts, and a Settings form. Pattern for admin panels.',
     format: 'py',
     url: 'https://docs.streamlit.io/develop/concepts/multipage-apps',
-    tags: ['multipage', 'admin', 'navigation', 'sidebar', 'login', 'session_state', 'radio', 'pages', 'admin_panel', 'painel', 'admin', 'navegação', 'paginas'],
+    tags: ['multipage', 'admin', 'navigation', 'sidebar', 'session_state', 'radio', 'pages', 'admin_panel', 'painel', 'admin', 'navegação', 'paginas'],
     content: `import streamlit as st
 import pandas as pd
 import numpy as np
@@ -330,90 +345,79 @@ import plotly.express as px
 
 st.set_page_config(page_title="Admin Panel", layout="wide", initial_sidebar_state="expanded")
 
-# ── Simple session-based "login" ─────────────────────────────────────────────
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if not st.session_state.logged_in:
-    st.title("🔐 Login")
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.form_submit_button("Login"):
-            if username == "admin" and password == "admin":
-                st.session_state.logged_in = True
-                st.rerun()
-            else:
-                st.error("Invalid credentials. Use admin / admin")
-    st.stop()
-
-# ── Sidebar navigation ───────────────────────────────────────────────────────
+# ── Sidebar navigation ────────────────────────────────────────────────────────
 with st.sidebar:
-    st.image("https://streamlit.io/images/brand/streamlit-mark-color.svg", width=40)
     st.title("Admin Panel")
-    page = st.radio("Navigate", ["📊 Overview", "👥 Users", "📦 Products", "⚙️ Settings"])
-    st.divider()
-    if st.button("🚪 Logout"):
-        st.session_state.logged_in = False
-        st.rerun()
+    page = st.radio(
+        "Navigate",
+        ["Overview", "Users", "Products", "Settings"],
+        key="main_nav",
+    )
 
-# ── Data ─────────────────────────────────────────────────────────────────────
+# ── Inline data (all columns have matching lengths) ───────────────────────────
 rng = np.random.default_rng(1)
-dates = pd.date_range("2024-01-01", periods=90)
-revenue_df = pd.DataFrame({"date": dates, "revenue": rng.integers(5000, 20000, 90).cumsum()})
+dates = pd.date_range("2024-01-01", periods=90)                          # 90
+revenue_df = pd.DataFrame({
+    "date": dates,                                                        # 90
+    "revenue": rng.integers(5000, 20000, 90).cumsum(),                   # 90
+})
 users_df = pd.DataFrame({
-    "name": [f"User {i}" for i in range(1, 21)],
-    "role": rng.choice(["Admin", "Editor", "Viewer"], 20),
-    "status": rng.choice(["Active", "Inactive"], 20, p=[0.8, 0.2]),
-    "joined": pd.date_range("2023-01-01", periods=20, freq="15D"),
+    "name": [f"User {i}" for i in range(1, 21)],                        # 20
+    "role": rng.choice(["Admin", "Editor", "Viewer"], 20),               # 20
+    "status": rng.choice(["Active", "Inactive"], 20, p=[0.8, 0.2]),      # 20
+    "joined": pd.date_range("2023-01-01", periods=20, freq="15D"),       # 20
 })
 products_df = pd.DataFrame({
-    "product": [f"SKU-{i:03d}" for i in range(1, 31)],
-    "category": rng.choice(["A", "B", "C"], 30),
-    "sales": rng.integers(10, 500, 30),
-    "price": rng.uniform(10, 200, 30).round(2),
+    "product": [f"SKU-{i:03d}" for i in range(1, 31)],                  # 30
+    "category": rng.choice(["A", "B", "C"], 30),                        # 30
+    "sales": rng.integers(10, 500, 30),                                  # 30
+    "price": rng.uniform(10, 200, 30).round(2),                          # 30
 })
 
-# ── Pages ────────────────────────────────────────────────────────────────────
-if page == "📊 Overview":
-    st.title("📊 Overview")
+# ── Pages ─────────────────────────────────────────────────────────────────────
+if page == "Overview":
+    st.title("Overview")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Revenue", f"€{revenue_df['revenue'].iloc[-1]:,.0f}", "+12%")
     c2.metric("Active Users", str(len(users_df[users_df["status"] == "Active"])), "+3")
     c3.metric("Products", str(len(products_df)))
-    c4.metric("Avg Order", f"€{products_df['price'].mean():.2f}")
+    c4.metric("Avg Price", f"€{products_df['price'].mean():.2f}")
     st.plotly_chart(
         px.line(revenue_df, x="date", y="revenue", title="Cumulative Revenue"),
         use_container_width=True,
     )
 
-elif page == "👥 Users":
-    st.title("👥 User Management")
-    status_filter = st.selectbox("Filter by status", ["All", "Active", "Inactive"])
+elif page == "Users":
+    st.title("User Management")
+    status_filter = st.selectbox("Filter by status", ["All", "Active", "Inactive"], key="status_filter")
     shown = users_df if status_filter == "All" else users_df[users_df["status"] == status_filter]
     st.dataframe(shown, use_container_width=True, hide_index=True)
 
-elif page == "📦 Products":
-    st.title("📦 Products")
+elif page == "Products":
+    st.title("Products")
     col1, col2 = st.columns(2)
     with col1:
-        fig = px.bar(products_df.nlargest(10, "sales"), x="product", y="sales", color="category",
-                     title="Top 10 Products by Sales")
+        fig = px.bar(
+            products_df.nlargest(10, "sales"), x="product", y="sales",
+            color="category", title="Top 10 Products by Sales",
+            color_discrete_sequence=px.colors.qualitative.Set2,
+        )
         st.plotly_chart(fig, use_container_width=True)
     with col2:
-        fig2 = px.pie(products_df, names="category", values="sales", title="Sales by Category")
+        fig2 = px.pie(products_df, names="category", values="sales",
+                      title="Sales by Category", hole=0.35)
         st.plotly_chart(fig2, use_container_width=True)
 
-elif page == "⚙️ Settings":
-    st.title("⚙️ Settings")
+elif page == "Settings":
+    st.title("Settings")
     with st.form("settings_form"):
         st.subheader("General")
-        app_name = st.text_input("App Name", "My Dashboard")
-        language = st.selectbox("Language", ["Portuguese", "English", "Spanish"])
+        app_name = st.text_input("App Name", "My Dashboard", key="app_name_input")
+        language = st.selectbox("Language", ["Portuguese", "English", "Spanish"], key="lang_select")
         st.subheader("Notifications")
-        email_notif = st.toggle("Email notifications", value=True)
-        threshold = st.slider("Alert threshold (%)", 0, 100, 80)
-        if st.form_submit_button("💾 Save"):
+        email_notif = st.toggle("Email notifications", value=True, key="email_toggle")
+        threshold = st.slider("Alert threshold (%)", 0, 100, 80, key="threshold_slider")
+        if st.form_submit_button("Save"):
             st.success("Settings saved!")
 `,
   },
@@ -438,12 +442,12 @@ st.title("💹 Financial Dashboard")
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Settings")
-    ticker = st.selectbox("Asset", ["AAPL", "TSLA", "MSFT", "AMZN", "BTC"])
-    period = st.selectbox("Period", ["1M", "3M", "6M", "1Y"], index=2)
-    ma_short = st.slider("Short MA (days)", 5, 30, 10)
-    ma_long = st.slider("Long MA (days)", 20, 200, 50)
+    ticker = st.selectbox("Asset", ["AAPL", "TSLA", "MSFT", "AMZN", "BTC"], key="ticker_sel")
+    period = st.selectbox("Period", ["1M", "3M", "6M", "1Y"], index=2, key="period_sel")
+    ma_short = st.slider("Short MA (days)", 5, 20, 10, key="ma_short_sl")
+    ma_long = st.slider("Long MA (days)", 25, 200, 50, key="ma_long_sl")
 
-# ── Synthetic OHLCV data ─────────────────────────────────────────────────────
+# ── Synthetic OHLCV data ──────────────────────────��──────────────────────────
 @st.cache_data
 def generate_ohlcv(ticker: str, period: str) -> pd.DataFrame:
     days = {"1M": 22, "3M": 66, "6M": 130, "1Y": 252}[period]
@@ -457,8 +461,18 @@ def generate_ohlcv(ticker: str, period: str) -> pd.DataFrame:
                          "open": open_, "high": high, "low": low, "close": close, "volume": volume})
 
 df = generate_ohlcv(ticker, period)
-df[f"MA{ma_short}"] = df["close"].rolling(ma_short).mean()
-df[f"MA{ma_long}"] = df["close"].rolling(ma_long).mean()
+
+# Cap ma_long to the number of available trading days so it never exceeds
+# the DataFrame length (which would make the entire MA column NaN).
+effective_long = min(ma_long, len(df))
+effective_short = min(ma_short, effective_long - 1) if effective_long > 1 else 1
+
+df[f"MA{effective_short}"] = df["close"].rolling(effective_short).mean()
+df[f"MA{effective_long}"] = df["close"].rolling(effective_long).mean()
+
+if ma_short >= ma_long:
+    st.warning(f"Short MA ({ma_short}) must be less than Long MA ({ma_long}). Adjust the sliders.")
+    st.stop()
 
 # ── KPIs ─────────────────────────────────────────────────────────────────────
 ret = (df["close"].iloc[-1] / df["close"].iloc[0] - 1)
@@ -478,9 +492,9 @@ fig.add_trace(go.Candlestick(
     name=ticker, increasing_line_color="#2ecc71", decreasing_line_color="#e74c3c",
 ), row=1, col=1)
 
-fig.add_trace(go.Scatter(x=df["date"], y=df[f"MA{ma_short}"], name=f"MA{ma_short}",
+fig.add_trace(go.Scatter(x=df["date"], y=df[f"MA{effective_short}"], name=f"MA{effective_short}",
                           line=dict(color="#3498db", width=1.5)), row=1, col=1)
-fig.add_trace(go.Scatter(x=df["date"], y=df[f"MA{ma_long}"], name=f"MA{ma_long}",
+fig.add_trace(go.Scatter(x=df["date"], y=df[f"MA{effective_long}"], name=f"MA{effective_long}",
                           line=dict(color="#e67e22", width=1.5)), row=1, col=1)
 
 colors = ["#2ecc71" if c >= o else "#e74c3c" for c, o in zip(df["close"], df["open"])]
