@@ -28,8 +28,10 @@ import {
   type QualityMode,
   DEFAULT_CONFIGS,
   SUGGESTED_MODELS,
+  VRAM_CONTEXT_SUGGESTIONS,
   testConnection,
   getDefaultModel,
+  resolveSamplingParams,
 } from '@/lib/llm-client'
 
 interface LLMSettingsProps {
@@ -413,6 +415,87 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
               </Field>
             )}
 
+            {/* Context Length (num_ctx) — hardware-driven, independent of quality mode.
+                Only relevant for local providers; Ollama Cloud runs on Ollama's own hardware. */}
+            {config.provider !== 'ollama-cloud' && (() => {
+              const effectiveCtx = resolveSamplingParams(config).num_ctx
+              const isOverridden = !!config.contextLength && config.contextLength > 0
+              return (
+                <Field>
+                  <FieldLabel>Context Length (num_ctx)</FieldLabel>
+                  <p className="text-xs text-muted-foreground -mt-1 mb-1">
+                    Pick the option closest to your GPU&apos;s VRAM. Too high and the model
+                    spills onto CPU (slow, sometimes malformed output); too low and long
+                    prompts get silently truncated.
+                  </p>
+                  {config.provider === 'lmstudio' ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-500 -mt-1 mb-1">
+                      ⚠ LM Studio&apos;s API has no field for this — picking a value below only
+                      updates the reminder text under &quot;Setup&quot;. You still have to type it
+                      into LM Studio yourself, on the model&apos;s load screen, before starting the
+                      server.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground -mt-1 mb-1">
+                      Sent automatically as <code className="font-mono">num_ctx</code> with every
+                      request — no extra steps needed.
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-1.5">
+                    {VRAM_CONTEXT_SUGGESTIONS.map((s) => (
+                      <button
+                        key={s.label}
+                        className={`px-2 py-1 rounded-md border text-xs font-medium transition-colors ${
+                          config.contextLength === s.num_ctx
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'hover:bg-muted'
+                        }`}
+                        onClick={() => onConfigChange({ ...config, contextLength: s.num_ctx })}
+                      >
+                        {s.label}
+                        <span className="block opacity-75">{s.num_ctx.toLocaleString()}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <Input
+                      type="number"
+                      min={512}
+                      step={512}
+                      value={config.contextLength ?? ''}
+                      placeholder={`${effectiveCtx} (mode default)`}
+                      onChange={(e) => {
+                        const v = e.target.value.trim()
+                        onConfigChange({
+                          ...config,
+                          contextLength: v ? Math.max(0, parseInt(v, 10)) : undefined,
+                        })
+                      }}
+                      className="font-mono text-xs"
+                    />
+                    {isOverridden && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onConfigChange({ ...config, contextLength: undefined })}
+                      >
+                        Reset
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {config.provider === 'lmstudio'
+                      ? isOverridden
+                        ? `Reminder set: type ${config.contextLength!.toLocaleString()} tokens into LM Studio's model load screen.`
+                        : `Reminder shows the ${config.qualityMode ?? 'fast'} mode default: ${effectiveCtx.toLocaleString()} tokens — set this in LM Studio.`
+                      : isOverridden
+                      ? `Using your override: ${config.contextLength!.toLocaleString()} tokens.`
+                      : `Using the ${config.qualityMode ?? 'fast'} mode default: ${effectiveCtx.toLocaleString()} tokens.`}
+                  </p>
+                </Field>
+              )
+            })()}
+
             <Field>
               <FieldLabel>Model</FieldLabel>
               <Select value={config.model} onValueChange={handleModelChange}>
@@ -460,9 +543,28 @@ export function LLMSettings({ config, onConfigChange }: LLMSettingsProps) {
                 </p>
               )}
               {config.provider === 'lmstudio' && (
-                <p className="text-muted-foreground">
-                  Enable &quot;Allow CORS&quot; in LM Studio server settings.
-                </p>
+                <div className="space-y-2 text-muted-foreground">
+                  <p>
+                    Enable &quot;Allow CORS&quot; in LM Studio server settings.
+                  </p>
+                  <p>
+                    Temperature, top-p, max tokens and repeat penalty are sent automatically
+                    for the selected mode below — but LM Studio does not accept context length
+                    per request. Set it manually when you load the model (model load screen →
+                    &quot;Context Length&quot;), before starting the server:
+                  </p>
+                  <code className="text-xs block bg-background p-2 rounded">
+                    Context Length ≥ {resolveSamplingParams(config).num_ctx.toLocaleString()} tokens
+                    {config.contextLength && config.contextLength > 0
+                      ? ' (your override, set above)'
+                      : ` (${config.qualityMode ?? 'fast'} mode default)`}
+                  </code>
+                  <p className="text-xs">
+                    If it&apos;s set lower than that, the app&apos;s system prompt + RAG context can get
+                    silently truncated, which is the most common cause of broken or empty dashboards
+                    with LM Studio (and of the automatic &quot;Refining and correcting&quot; pass kicking in).
+                  </p>
+                </div>
               )}
             </div>
           </FieldGroup>

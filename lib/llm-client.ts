@@ -13,6 +13,14 @@ export interface LLMConfig {
   // The same API key works for both the /api/tags listing and the
   // /api/chat streaming endpoint. For local providers this is ignored.
   apiKey?: string
+  // Manual override for num_ctx (the context window / KV cache size), in tokens.
+  // Takes precedence over the Fast/Quality/Custom preset value for ANY mode.
+  // This exists because the "correct" context size depends on the user's
+  // available VRAM, not on the quality mode — a fixed preset that's too large
+  // for the local GPU causes silent CPU offload (Ollama) or prompt truncation
+  // (LM Studio), which shows up as slow generation and malformed HTML.
+  // Undefined/0 means "use the mode's preset value" (previous behaviour).
+  contextLength?: number
 }
 
 export interface SamplingParams {
@@ -100,6 +108,22 @@ export const SUGGESTED_MODELS: Record<LLMProvider, string[]> = {
   ],
 }
 
+// Rule-of-thumb suggestions mapping available VRAM to a safe num_ctx for the
+// kind of 7B-13B local models this app targets. These are deliberately
+// conservative (leaving headroom for the model weights themselves + OS/other
+// apps) rather than the theoretical max — the goal is to keep 100% of the
+// model on GPU instead of spilling into CPU offload, which is the main cause
+// of the "generation is slow and the HTML comes out malformed" failure mode.
+// Users with larger/smaller models than that should still fine-tune manually.
+export const VRAM_CONTEXT_SUGGESTIONS: { label: string; num_ctx: number }[] = [
+  { label: '4 GB VRAM', num_ctx: 4096 },
+  { label: '6 GB VRAM', num_ctx: 6144 },
+  { label: '8 GB VRAM', num_ctx: 8192 },
+  { label: '12 GB VRAM', num_ctx: 12288 },
+  { label: '16 GB VRAM', num_ctx: 16384 },
+  { label: '24 GB+ VRAM', num_ctx: 24576 },
+]
+
 // Resolve the effective SamplingParams for a given config, including custom temperature.
 // When mode is 'custom', all params are interpolated between the 'fast' and 'quality'
 // presets proportionally to the chosen temperature (0.1 → fast, 1.0 → quality).
@@ -109,6 +133,7 @@ export const SUGGESTED_MODELS: Record<LLMProvider, string[]> = {
 // different (low-temperature, HTML-generation) use case.
 export function resolveSamplingParams(config: LLMConfig): SamplingParams {
   const mode = config.qualityMode ?? 'fast'
+  let params: SamplingParams
   if (mode === 'custom') {
     const temp = config.customTemperature ?? 0.5
     // Normalise temperature into a 0–1 interpolation factor.
@@ -118,15 +143,23 @@ export function resolveSamplingParams(config: LLMConfig): SamplingParams {
       Math.round((a + (b - a) * t) * 100) / 100
     const fast = SAMPLING_PRESETS.fast
     const quality = SAMPLING_PRESETS.quality
-    return {
+    params = {
       temperature:    temp,
       top_p:          lerp(fast.top_p,          quality.top_p),
       repeat_penalty: lerp(fast.repeat_penalty, quality.repeat_penalty),
       num_predict:    Math.round(lerp(fast.num_predict, quality.num_predict)),
       num_ctx:        Math.round(lerp(fast.num_ctx,     quality.num_ctx)),
     }
+  } else {
+    params = SAMPLING_PRESETS[mode]
   }
-  return SAMPLING_PRESETS[mode]
+
+  // A manual contextLength always wins, regardless of mode — it reflects a
+  // hardware constraint (available VRAM), not a creativity/quality tradeoff.
+  if (config.contextLength && config.contextLength > 0) {
+    return { ...params, num_ctx: config.contextLength }
+  }
+  return params
 }
 
 // Helper: providers that speak the Ollama REST protocol (local or cloud).
@@ -459,6 +492,9 @@ async function generateWithLMStudio(
   callbacks: ExtendedCallbacks,
   signal: AbortSignal
 ): Promise<void> {
+  // Resolve once — avoids recomputing (and re-lerping, for custom mode) three times.
+  const sampling = resolveSamplingParams(config)
+
   const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers: {
@@ -468,9 +504,14 @@ async function generateWithLMStudio(
       model: config.model,
       messages: messages,
       stream: true,
-      temperature: resolveSamplingParams(config).temperature,
-      top_p: resolveSamplingParams(config).top_p,
-      max_tokens: resolveSamplingParams(config).num_predict,
+      temperature: sampling.temperature,
+      top_p: sampling.top_p,
+      max_tokens: sampling.num_predict,
+      // Non-standard OpenAI field, but LM Studio's llama.cpp-backed server
+      // accepts it directly in the body (same semantics as Ollama's
+      // repeat_penalty). Keeps Fast/Quality/Custom behaviour aligned across
+      // both local providers.
+      repeat_penalty: sampling.repeat_penalty,
     }),
     signal,
   })
