@@ -243,7 +243,7 @@ export async function testConnection(config: LLMConfig): Promise<{ success: bool
 // Local LLMs can take a while to load the model into memory on the first request
 // (cold start), so we use a generous timeout. The watchdog is also reset on any
 // bytes received from the network, not just on successfully parsed tokens.
-const STREAM_INACTIVITY_TIMEOUT_MS = 180_000
+const STREAM_INACTIVITY_TIMEOUT_MS = 300_000
 
 export async function generateCompletion(
   config: LLMConfig,
