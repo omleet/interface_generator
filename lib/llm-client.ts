@@ -167,16 +167,25 @@ function isOllamaProtocol(provider: LLMProvider): boolean {
   return provider === 'ollama' || provider === 'ollama-cloud'
 }
 
-// For Ollama Cloud we route through a Next.js server-side proxy to avoid CORS.
-// The browser cannot call https://ollama.com/api/* directly.
+// Every provider is routed through a Next.js server-side proxy — never
+// called directly from the browser. This matters for two reasons:
+// 1. Ollama Cloud: the browser cannot call https://ollama.com/api/* directly (CORS).
+// 2. Local Ollama/LM Studio: if the browser called `config.baseUrl` directly,
+//    then whichever DEVICE has the page open (e.g. a phone on the LAN) would
+//    need Ollama/LM Studio running on ITSELF, since 127.0.0.1 in the phone's
+//    browser means the phone. Routing through our own server means the
+//    Next.js process — running on the PC that's actually hosting Ollama —
+//    is the one resolving 127.0.0.1, regardless of which device opened the site.
 function getTagsUrl(config: LLMConfig): string {
   if (config.provider === 'ollama-cloud') return '/api/ollama-cloud/tags'
-  return `${config.baseUrl}/api/tags`
+  if (config.provider === 'lmstudio') return '/api/lmstudio/tags'
+  return '/api/ollama/tags'
 }
 
 function getChatUrl(config: LLMConfig): string {
   if (config.provider === 'ollama-cloud') return '/api/ollama-cloud/chat'
-  return `${config.baseUrl}/api/chat`
+  if (config.provider === 'lmstudio') return '/api/lmstudio/chat'
+  return '/api/ollama/chat'
 }
 
 function buildAuthHeaders(config: LLMConfig): Record<string, string> {
@@ -185,43 +194,38 @@ function buildAuthHeaders(config: LLMConfig): Record<string, string> {
     // Sent to our proxy route, which forwards it as Authorization: Bearer to ollama.com
     headers['x-ollama-api-key'] = config.apiKey
   }
+  if (config.provider === 'ollama' || config.provider === 'lmstudio') {
+    // Tells our server-side proxy which local address to reach — the server
+    // process resolves this, not the browser, so 127.0.0.1 stays correct.
+    headers['x-llm-base-url'] = config.baseUrl
+  }
   return headers
 }
 
 export async function testConnection(config: LLMConfig): Promise<{ success: boolean; error?: string; models?: string[] }> {
   try {
-    if (isOllamaProtocol(config.provider)) {
-      // Cloud requires an API key; fail fast with a clear message instead of a 401.
-      if (config.provider === 'ollama-cloud' && !config.apiKey) {
-        return { success: false, error: 'Missing API key. Create one at ollama.com and paste it in settings.' }
-      }
-      const response = await fetch(getTagsUrl(config), {
-        method: 'GET',
-        headers: buildAuthHeaders(config),
-        signal: AbortSignal.timeout(10000),
-      })
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          return { success: false, error: 'Invalid or missing API key for Ollama Cloud.' }
-        }
-        return { success: false, error: `HTTP ${response.status}: ${response.statusText}` }
-      }
-      const data = await response.json()
-      const models = data.models?.map((m: { name: string }) => m.name) || []
-      return { success: true, models }
-    } else {
-      // LM Studio uses OpenAI-compatible API
-      const response = await fetch(`${config.baseUrl}/v1/models`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(5000),
-      })
-      if (!response.ok) {
-        return { success: false, error: `HTTP ${response.status}: ${response.statusText}` }
-      }
-      const data = await response.json()
-      const models = data.data?.map((m: { id: string }) => m.id) || []
-      return { success: true, models }
+    // Cloud requires an API key; fail fast with a clear message instead of a 401.
+    if (config.provider === 'ollama-cloud' && !config.apiKey) {
+      return { success: false, error: 'Missing API key. Create one at ollama.com and paste it in settings.' }
     }
+    // All providers now go through our server-side proxy routes (see getTagsUrl).
+    const response = await fetch(getTagsUrl(config), {
+      method: 'GET',
+      headers: buildAuthHeaders(config),
+      signal: AbortSignal.timeout(10000),
+    })
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        return { success: false, error: 'Invalid or missing API key for Ollama Cloud.' }
+      }
+      return { success: false, error: `HTTP ${response.status}: ${response.statusText}` }
+    }
+    const data = await response.json()
+    // Ollama/Ollama Cloud return { models: [{ name }] }; LM Studio returns { data: [{ id }] }.
+    const models = isOllamaProtocol(config.provider)
+      ? (data.models?.map((m: { name: string }) => m.name) || [])
+      : (data.data?.map((m: { id: string }) => m.id) || [])
+    return { success: true, models }
   } catch (error) {
     if (error instanceof Error) {
       if (error.name === 'AbortError' || error.name === 'TimeoutError') {
@@ -495,11 +499,9 @@ async function generateWithLMStudio(
   // Resolve once — avoids recomputing (and re-lerping, for custom mode) three times.
   const sampling = resolveSamplingParams(config)
 
-  const response = await fetch(`${config.baseUrl}/v1/chat/completions`, {
+  const response = await fetch(getChatUrl(config), {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: buildAuthHeaders(config),
     body: JSON.stringify({
       model: config.model,
       messages: messages,
